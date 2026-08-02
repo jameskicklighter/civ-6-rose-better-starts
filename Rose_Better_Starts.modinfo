@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Mod id="4f11627b-e207-443f-bcbc-fb419d29409a" version="1">
+  <Properties>
+    <Name>Rose Better Starts</Name>
+    <Description>Deterministically places missing strategic resources within five tiles of major-civilization land starts during map generation.</Description>
+    <Teaser>Multiplayer-safe strategic resource balancing for Firaxis procedural maps.</Teaser>
+    <Authors>James Kicklighter</Authors>
+    <AffectsSavedGames>0</AffectsSavedGames>
+    <SupportsMultiplayer>1</SupportsMultiplayer>
+    <CompatibleVersions>2.0</CompatibleVersions>
+  </Properties>
+
+  <Dependencies>
+    <Mod id="4873eb62-8ccc-4574-b784-dda455e74e68" title="Expansion: Gathering Storm" />
+  </Dependencies>
+
+  <FrontEndActions>
+    <UpdateDatabase id="RBS_MAP_CONFIGURATION">
+      <Properties>
+        <LoadOrder>1000</LoadOrder>
+      </Properties>
+      <File>Configuration/RBS_MapRedirects.sql</File>
+    </UpdateDatabase>
+  </FrontEndActions>
+
+  <InGameActions>
+    <ImportFiles id="RBS_MAP_SCRIPTS">
+      <Properties>
+        <LoadOrder>1000</LoadOrder>
+      </Properties>
+      <File>Maps/RBS_StartNormalizer.lua</File>
+      <File>Maps/RBS_Continents.lua</File>
+      <File>Maps/RBS_Fractal.lua</File>
+      <File>Maps/RBS_InlandSea.lua</File>
+      <File>Maps/RBS_Island_Plates.lua</File>
+      <File>Maps/RBS_Lakes.lua</File>
+      <File>Maps/RBS_Pangaea.lua</File>
+      <File>Maps/RBS_Seven_Seas.lua</File>
+      <File>Maps/RBS_Shuffle.lua</File>
+      <File>Maps/RBS_Small_Continents.lua</File>
+      <File>Maps/RBS_Terra.lua</File>
+      <File>Maps/RBS_Archipelago_XP2.lua</File>
+      <File>Maps/RBS_Continents_Islands.lua</File>
+      <File>Maps/RBS_Primordial.lua</File>
+      <File>Maps/RBS_Splintered_Fractal.lua</File>
+      <File>Maps/RBS_Tilted_Axis.lua</File>
+      <File>Maps/RBS_Highlands_XP2.lua</File>
+      <File>Maps/RBS_Wetlands_XP2.lua</File>
+    </ImportFiles>
+  </InGameActions>
+
+  <Files>
+    <File>Configuration/RBS_MapRedirects.sql</File>
+    <File>Maps/RBS_StartNormalizer.lua</File>
+    <File>Maps/RBS_Continents.lua</File>
+    <File>Maps/RBS_Fractal.lua</File>
+    <File>Maps/RBS_InlandSea.lua</File>
+    <File>Maps/RBS_Island_Plates.lua</File>
+    <File>Maps/RBS_Lakes.lua</File>
+    <File>Maps/RBS_Pangaea.lua</File>
+    <File>Maps/RBS_Seven_Seas.lua</File>
+    <File>Maps/RBS_Shuffle.lua</File>
+    <File>Maps/RBS_Small_Continents.lua</File>
+    <File>Maps/RBS_Terra.lua</File>
+    <File>Maps/RBS_Archipelago_XP2.lua</File>
+    <File>Maps/RBS_Continents_Islands.lua</File>
+    <File>Maps/RBS_Primordial.lua</File>
+    <File>Maps/RBS_Splintered_Fractal.lua</File>
+    <File>Maps/RBS_Tilted_Axis.lua</File>
+    <File>Maps/RBS_Highlands_XP2.lua</File>
+    <File>Maps/RBS_Wetlands_XP2.lua</File>
+    <File>README.md</File>
+  </Files>
+</Mod>
