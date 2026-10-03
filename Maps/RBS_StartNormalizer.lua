@@ -5,7 +5,7 @@
 
 RoseBetterStarts = RoseBetterStarts or {};
 
-local VERSION = 3;
+local VERSION = 4;
 local MAX_DISTANCE = 5;
 local CHECKSUM_MODULUS = 2147483647;
 local MIX_MULTIPLIER = 48271;
@@ -15,7 +15,8 @@ local STRATEGIC_RESOURCES = {
   { Type = "RESOURCE_IRON",    PreferredRings = { 2, 3, 4, 5, 1 } },
   { Type = "RESOURCE_NITER",   PreferredRings = { 4, 5, 3, 2, 1 } },
   { Type = "RESOURCE_COAL",    PreferredRings = { 4, 5, 3, 2, 1 } },
-  { Type = "RESOURCE_OIL",     PreferredRings = { 4, 5, 3, 2, 1 } },
+  -- Oil may fall back to a Coast tile (sea or lake) when no land tile qualifies.
+  { Type = "RESOURCE_OIL",     PreferredRings = { 4, 5, 3, 2, 1 }, OffshoreFallback = true },
   { Type = "RESOURCE_ALUMINUM", PreferredRings = { 4, 5, 3, 2, 1 } },
   { Type = "RESOURCE_URANIUM", PreferredRings = { 4, 5, 3, 2, 1 } }
 };
@@ -118,16 +119,36 @@ local function GetRingRank(resourceDefinition, distance)
   return MAX_DISTANCE + 1;
 end
 
+-- Spectator mods (e.g. Better Spectator Mod) add a major slot with this leader.
+-- Map generation still gives it a start, but no civilization will settle there.
+local function IsSpectator(playerID)
+  if PlayerConfigurations == nil then
+    return false;
+  end
+  local config = PlayerConfigurations[playerID];
+  if config == nil then
+    return false;
+  end
+  return config:GetLeaderTypeName() == "LEADER_SPECTATOR"
+    or config:GetCivilizationTypeName() == "CIVILIZATION_SPECTATOR";
+end
+
 local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reservedStartPlots)
   for listIndex = 1, playerCount do
     local playerID = playerIDs[listIndex];
     local player = Players[playerID];
     if player ~= nil then
       local startPlot = player:GetStartingPlot();
+      local spectator = startsByIndex ~= nil and IsSpectator(playerID);
+      if spectator then
+        print("RBS_SKIP player=" .. tostring(playerID)
+          .. " start=" .. tostring(startPlot ~= nil and startPlot:GetIndex() or -1)
+          .. " reason=SPECTATOR");
+      end
       if startPlot ~= nil then
         local startIndex = startPlot:GetIndex();
         reservedStartPlots[startIndex] = true;
-        if startsByIndex ~= nil then
+        if startsByIndex ~= nil and not spectator then
           startsByIndex[#startsByIndex + 1] = {
             PlayerID = playerID,
             Plot = startPlot,
@@ -135,7 +156,7 @@ local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reser
             Nearby = CollectNearbyPlots(startPlot)
           };
         end
-      elseif startsByIndex ~= nil then
+      elseif startsByIndex ~= nil and not spectator then
         print("RBS_UNSATISFIED player=" .. tostring(playerID) .. " start=-1 resource=ALL reason=NO_STARTING_PLOT");
       end
     end
@@ -184,19 +205,24 @@ end
 -- Best legal plot by preferred ring. Plots in the same ring are ordered by a
 -- seed-derived key so placements scatter around the start instead of always
 -- taking the lowest plot index; plot index settles any remaining tie.
-local function FindPlacementPlot(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, seed)
+-- Land search takes land plots only. The offshore search takes water plots
+-- only and skips ring 1, the tiles next to the future capital. Lakes are
+-- allowed: base generation places Oil on any legal Coast tile, lakes included,
+-- and Offshore Oil Rigs can be built there.
+local function FindPlacementPlot(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, seed, offshore)
   local bestPlot = nil;
   local bestDistance = -1;
   local bestRank = MAX_DISTANCE + 1;
   local bestKey = CHECKSUM_MODULUS;
   local bestPlotIndex = -1;
   local nearby = startRecord.Nearby;
+  local minimumDistance = offshore and 2 or 1;
 
   for nearbyNumber = 1, #nearby do
     local entry = nearby[nearbyNumber];
     local distance = entry.Distance;
     local plotIndex = entry.PlotIndex;
-    if distance >= 1 and reservedStartPlots[plotIndex] ~= true then
+    if distance >= minimumDistance and reservedStartPlots[plotIndex] ~= true then
       local rank = GetRingRank(resourceDefinition, distance);
       if rank <= bestRank then
         local key = GetTieBreakKey(seed, startRecord.PlotIndex, resourceIndex, plotIndex);
@@ -204,8 +230,9 @@ local function FindPlacementPlot(startRecord, resourceDefinition, resourceIndex,
           or key < bestKey
           or (key == bestKey and plotIndex < bestPlotIndex);
         local plot = entry.Plot;
+        local water = plot:IsWater();
         if better
-          and not plot:IsWater()
+          and water == offshore
           and not plot:IsImpassable()
           and not plot:IsNaturalWonder()
           and plot:GetResourceCount() == 0
@@ -245,15 +272,32 @@ local function EnsureResource(startRecord, resourceDefinition, resourceIndex, re
     resourceIndex,
     resourceHash,
     reservedStartPlots,
-    seed
+    seed,
+    false
   );
+  local placedStatus = "PLACED";
+  local unsatisfiedReason = "NO_LEGAL_LAND_PLOT_WITHIN_5";
+
+  if placementPlot == nil and resourceDefinition.OffshoreFallback then
+    placementPlot, placementDistance = FindPlacementPlot(
+      startRecord,
+      resourceDefinition,
+      resourceIndex,
+      resourceHash,
+      reservedStartPlots,
+      seed,
+      true
+    );
+    placedStatus = "PLACED_OFFSHORE";
+    unsatisfiedReason = "NO_LEGAL_LAND_OR_OFFSHORE_PLOT_WITHIN_5";
+  end
 
   if placementPlot == nil then
     print(
       "RBS_UNSATISFIED player=" .. tostring(startRecord.PlayerID)
       .. " start=" .. tostring(startRecord.PlotIndex)
       .. " resource=" .. resourceDefinition.Type
-      .. " reason=NO_LEGAL_LAND_PLOT_WITHIN_5"
+      .. " reason=" .. unsatisfiedReason
     );
     return false;
   end
@@ -276,7 +320,7 @@ local function EnsureResource(startRecord, resourceDefinition, resourceIndex, re
     "RBS_RESOURCE player=" .. tostring(startRecord.PlayerID)
     .. " start=" .. tostring(startRecord.PlotIndex)
     .. " resource=" .. resourceDefinition.Type
-    .. " status=PLACED"
+    .. " status=" .. placedStatus
     .. " plot=" .. tostring(placementPlot:GetIndex())
     .. " distance=" .. tostring(placementDistance)
   );
