@@ -4,7 +4,7 @@
     <Name>Rose Better Starts</Name>
     <Description>Deterministically places missing strategic resources within five tiles of major-civilization land starts during map generation.</Description>
     <Teaser>Multiplayer-safe strategic resource balancing for Firaxis procedural maps.</Teaser>
-    <Authors>James Kicklighter</Authors>
+    <Authors>Rose</Authors>
     <AffectsSavedGames>0</AffectsSavedGames>
     <SupportsMultiplayer>1</SupportsMultiplayer>
     <CompatibleVersions>2.0</CompatibleVersions>
