@@ -5,7 +5,10 @@
 
 RoseBetterStarts = RoseBetterStarts or {};
 
-local VERSION = 4;
+-- Start-bias enforcement for major civilizations (installed by Install below).
+include "RBS_StartBias";
+
+local VERSION = 6;
 local MAX_DISTANCE = 5;
 local CHECKSUM_MODULUS = 2147483647;
 local MIX_MULTIPLIER = 48271;
@@ -75,6 +78,10 @@ local function GetTieBreakKey(seed, startIndex, resourceIndex, plotIndex)
   return Mix(MulMod(key, key), 0);
 end
 
+-- Shared with RBS_StartBias.lua, which breaks its own ties the same way.
+RoseBetterStarts.GetMapSeed = GetMapSeed;
+RoseBetterStarts.GetTieBreakKey = GetTieBreakKey;
+
 -- Plots within MAX_DISTANCE of a start, in ascending plot-index order. The
 -- square offset window contains every plot within that hex distance. The
 -- lookup range is twice the radius so the engine's own range check can never
@@ -131,6 +138,151 @@ local function IsSpectator(playerID)
   end
   return config:GetLeaderTypeName() == "LEADER_SPECTATOR"
     or config:GetCivilizationTypeName() == "CIVILIZATION_SPECTATOR";
+end
+
+-- The stock script divides the land into one region per alive major,
+-- spectators included, and gives each one a start, so with a spectator slot
+-- a ninth of the map stayed empty around one of its best starts. During
+-- AssignStartingPlots.Create the player manager's major list is filtered,
+-- so neither the stock script nor the start-bias plan sees a spectator; the
+-- list is restored whatever happens inside Create. Afterwards every
+-- spectator gets the passable land plot farthest from all starts
+-- (RBS_SPECTATOR), so its units, if its mod gives it any, stand where
+-- nobody settles; the normalizer then skips it as before (RBS_SKIP). The
+-- slot's leader and civilization come from the shared lobby
+-- configuration, so every machine filters the same slots.
+local function AliveSpectators()
+  local spectators = {};
+  if PlayerManager == nil or PlayerManager.GetAliveMajorIDs == nil or PlayerManager.GetAliveMajorsCount == nil then
+    return spectators;
+  end
+  local ids = PlayerManager.GetAliveMajorIDs();
+  local count = PlayerManager.GetAliveMajorsCount();
+  for n = 1, count do
+    if IsSpectator(ids[n]) then
+      spectators[#spectators + 1] = ids[n];
+    end
+  end
+  return spectators;
+end
+
+-- Replaces the two major-list functions with filtered ones for the duration
+-- of Create; returns the function that restores them and the major count
+-- read back through the manager before and after, so the caller can tell
+-- whether the replacement took effect (the game's table is not the offline
+-- mock; a count that did not drop means the stock script still sees the
+-- spectator, as without the mod).
+local function InstallSpectatorFilter(spectators)
+  if #spectators == 0 or type(PlayerManager) ~= "table" then
+    return function() end, -1, -1;
+  end
+  local isSpectator = {};
+  for n = 1, #spectators do
+    isSpectator[spectators[n]] = true;
+  end
+  local baseIDs = PlayerManager.GetAliveMajorIDs;
+  local baseCount = PlayerManager.GetAliveMajorsCount;
+  local function FilteredIDs()
+    local ids = baseIDs();
+    local count = baseCount();
+    local filtered = {};
+    for n = 1, count do
+      if isSpectator[ids[n]] ~= true then
+        filtered[#filtered + 1] = ids[n];
+      end
+    end
+    return filtered;
+  end
+  local before = baseCount();
+  PlayerManager.GetAliveMajorIDs = FilteredIDs;
+  PlayerManager.GetAliveMajorsCount = function()
+    return #FilteredIDs();
+  end;
+  local after = PlayerManager.GetAliveMajorsCount();
+  return function()
+    PlayerManager.GetAliveMajorIDs = baseIDs;
+    PlayerManager.GetAliveMajorsCount = baseCount;
+  end, before, after;
+end
+
+local SPECTATOR_MIN_LAND_NEIGHBOURS = 2;
+
+local function PassableLandNeighbours(plot)
+  local count = 0;
+  for direction = 0, 5 do
+    local other = Map.GetAdjacentPlot(plot:GetX(), plot:GetY(), direction);
+    if other ~= nil and not other:IsWater() and not other:IsImpassable() then
+      count = count + 1;
+    end
+  end
+  return count;
+end
+
+-- Each spectator gets the passable land plot, with at least
+-- SPECTATOR_MIN_LAND_NEIGHBOURS passable land neighbours so its units can
+-- stand there, whose distance to the nearest start (majors, city-states,
+-- spectators placed before it) is largest; the lowest plot index on a tie.
+local function AssignSpectatorStarts(spectators)
+  RoseBetterStarts.SpectatorCount = #spectators;
+  if #spectators == 0 then
+    return;
+  end
+  local isSpectator = {};
+  for n = 1, #spectators do
+    isSpectator[spectators[n]] = true;
+  end
+  local taken = {};
+  local function Collect(ids, count)
+    for n = 1, count do
+      local player = Players[ids[n]];
+      if player ~= nil and isSpectator[ids[n]] ~= true then
+        local plot = player:GetStartingPlot();
+        if plot ~= nil then
+          taken[#taken + 1] = plot:GetIndex();
+        end
+      end
+    end
+  end
+  Collect(PlayerManager.GetAliveMajorIDs(), PlayerManager.GetAliveMajorsCount());
+  Collect(PlayerManager.GetAliveMinorIDs(), PlayerManager.GetAliveMinorsCount());
+
+  for n = 1, #spectators do
+    local bestIndex = nil;
+    local bestDistance = -1;
+    for plotIndex = 0, Map.GetPlotCount() - 1 do
+      local plot = Map.GetPlotByIndex(plotIndex);
+      if plot ~= nil and not plot:IsWater() and not plot:IsImpassable() then
+        local nearest = nil;
+        for t = 1, #taken do
+          local distance = Map.GetPlotDistance(plotIndex, taken[t]);
+          if nearest == nil or distance < nearest then
+            nearest = distance;
+            if nearest <= bestDistance then
+              break;
+            end
+          end
+        end
+        if nearest == nil then
+          nearest = 0;
+        end
+        if nearest > bestDistance and PassableLandNeighbours(plot) >= SPECTATOR_MIN_LAND_NEIGHBOURS then
+          bestDistance = nearest;
+          bestIndex = plotIndex;
+        end
+      end
+    end
+    local playerID = spectators[n];
+    local player = Players[playerID];
+    if bestIndex ~= nil and player ~= nil then
+      player:SetStartingPlot(Map.GetPlotByIndex(bestIndex));
+      taken[#taken + 1] = bestIndex;
+      print("RBS_SPECTATOR player=" .. tostring(playerID)
+        .. " plot=" .. tostring(bestIndex)
+        .. " distance=" .. tostring(bestDistance));
+    else
+      print("RBS_SPECTATOR player=" .. tostring(playerID) .. " plot=-1 distance=-1");
+    end
+  end
 end
 
 local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reservedStartPlots)
@@ -376,6 +528,7 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
 
   checksum = AddChecksum(checksum, skippedOceanStarts);
   checksum = AddChecksum(checksum, unsatisfiedCount);
+  checksum = AddChecksum(checksum, RoseBetterStarts.BiasChecksum or 0);
 
   print(
     "RBS_FINGERPRINT version=" .. tostring(VERSION)
@@ -385,6 +538,11 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
     .. " majors=" .. tostring(#starts)
     .. " skipped_ocean=" .. tostring(skippedOceanStarts)
     .. " unsatisfied=" .. tostring(unsatisfiedCount)
+    .. " spectators=" .. tostring(RoseBetterStarts.SpectatorCount or 0)
+    .. " spectator_filter=" .. tostring(RoseBetterStarts.SpectatorFilter or "none")
+    .. " bias_version=" .. tostring(RoseBetterStarts.StartBiasVersion or 0)
+    .. " bias_enabled=" .. tostring(RoseBetterStarts.StartBiasEnabled == true)
+    .. " bias=" .. tostring(RoseBetterStarts.BiasChecksum or 0)
     .. " checksum=" .. tostring(checksum)
   );
 end
@@ -461,9 +619,43 @@ function RoseBetterStarts.Install(baseMapFile)
   RoseBetterStarts.Installed = true;
   RoseBetterStarts.BaseMapFile = baseMapFile;
 
+  if RoseBetterStarts.InstallStartBias ~= nil then
+    RoseBetterStarts.InstallStartBias();
+  end
+
   local baseCreate = AssignStartingPlots.Create;
   AssignStartingPlots.Create = function(args)
-    local startDatabase = baseCreate(args);
+    local spectators = AliveSpectators();
+    local restore = function() end;
+    RoseBetterStarts.SpectatorFilter = "none";
+    if #spectators > 0 then
+      local okInstall, restoreOrError, before, after = pcall(InstallSpectatorFilter, spectators);
+      local applied = false;
+      if okInstall then
+        restore = restoreOrError;
+        applied = (after == before - #spectators);
+      else
+        before = -1;
+        after = -1;
+      end
+      if not applied then
+        -- Leave the stock script the unfiltered list, as without the mod.
+        restore();
+        restore = function() end;
+        RoseBetterStarts.SpectatorFilter = "no";
+      else
+        RoseBetterStarts.SpectatorFilter = "yes";
+      end
+      print("RBS_SPECTATOR_FILTER spectators=" .. tostring(#spectators)
+        .. " applied=" .. tostring(applied and "yes" or "no")
+        .. " majors=" .. tostring(before) .. "->" .. tostring(after));
+    end
+    local ok, startDatabase = pcall(baseCreate, args);
+    restore();
+    if not ok then
+      error(startDatabase, 0);
+    end
+    AssignSpectatorStarts(spectators);
     RoseBetterStarts.NormalizeMajorStrategics();
     return startDatabase;
   end;
