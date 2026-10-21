@@ -2,8 +2,8 @@
 <Mod id="4f11627b-e207-443f-bcbc-fb419d29409a" version="1">
   <Properties>
     <Name>Rose Better Starts</Name>
-    <Description>Deterministically places missing strategic resources within five tiles of major-civilization land starts during map generation.</Description>
-    <Teaser>Multiplayer-safe strategic resource balancing for Firaxis procedural maps.</Teaser>
+    <Description>Enforces each civilization's own start bias when choosing major-civilization starts, then places every missing strategic resource within five tiles of them. Deterministic, map generation only.</Description>
+    <Teaser>Multiplayer-safe start-bias and strategic-resource balancing for Firaxis procedural maps.</Teaser>
     <Authors>Rose</Authors>
     <AffectsSavedGames>0</AffectsSavedGames>
     <SupportsMultiplayer>1</SupportsMultiplayer>
@@ -29,6 +29,7 @@
         <LoadOrder>1000</LoadOrder>
       </Properties>
       <File>Maps/RBS_StartNormalizer.lua</File>
+      <File>Maps/RBS_StartBias.lua</File>
       <File>Maps/RBS_Continents.lua</File>
       <File>Maps/RBS_Fractal.lua</File>
       <File>Maps/RBS_InlandSea.lua</File>
@@ -52,6 +53,7 @@
   <Files>
     <File>Configuration/RBS_MapRedirects.sql</File>
     <File>Maps/RBS_StartNormalizer.lua</File>
+    <File>Maps/RBS_StartBias.lua</File>
     <File>Maps/RBS_Continents.lua</File>
     <File>Maps/RBS_Fractal.lua</File>
     <File>Maps/RBS_InlandSea.lua</File>
