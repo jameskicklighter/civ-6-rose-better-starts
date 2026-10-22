@@ -15,6 +15,9 @@
 -- This module replaces the two steps that decide that outcome:
 --   __SetStartMajor   the plot picked inside each region
 --   __InitStartBias   the civilization-to-plot matching (majors only)
+-- and wraps one step of the city-state placement:
+--   __SetStartMinor   the plot a city-state gets when no plot of its region
+--                     keeps the stock distance from the starts already placed
 -- Everything else is the stock code: region division, the validity checks
 -- a start must pass, Balanced/Legendary resources, city-states (placed after
 -- every major, as the stock script already does), and ocean starts.
@@ -120,10 +123,29 @@
 --     when it has none to meet. The displaced civilizations take the plots
 --     left over. The stock script matches this way too, over plots chosen
 --     without any bias; here it only repairs what crowding spoiled.
+--   * City-state fallback. The stock city-state pick, when no plot of a
+--     city-state's region passes every check, returns the first plot by
+--     fertility that passed the most checks in order (passable, land, the
+--     distance from every major, the distance from every city-state, the
+--     adjacency check, the natural wonder buffer, the resource check). When
+--     no plot of the region keeps the distance from the majors, that is the
+--     most fertile land plot however close to a capital. Such a fallback is
+--     replaced by the region's passable land plot that ranks highest by: the
+--     smaller of its two shortfalls against the stock distance checks (the
+--     tiles it is short of the distance from every major, and of the
+--     distance from every city-state placed so far; a check that passes is
+--     never short), then the larger, then the shortfall against the majors
+--     alone (of two plots equally short overall, the one less short of a
+--     capital wins), then the adjacency check, the natural wonder buffer,
+--     the resource check, no oasis, fertility, lowest plot index. A stock
+--     pick that keeps both distances is never changed. The rule can set a
+--     city-state a tile or two nearer a capital than the stock fallback
+--     would, when that keeps it farther from another city-state. This
+--     applies with or without start biases (IGNORESTARTBIAS leaves it on).
 
 RoseBetterStarts = RoseBetterStarts or {};
 
-local BIAS_VERSION = 2;
+local BIAS_VERSION = 3;
 local ENFORCE_START_BIASES = true;
 
 -- Tiers 1 and 2 are always required, all of them together; tier 3 only when
@@ -210,6 +232,7 @@ local EMPTY_PROFILE = { CivType = "NONE", Tiers = {}, RequiredTiers = {}, Strong
 
 local BaseSetStartMajor = nil;
 local BaseInitStartBias = nil;
+local BaseSetStartMinor = nil;
 
 local function AddChecksum(checksum, value)
   return (checksum * 31 + value) % CHECKSUM_MODULUS;
@@ -2107,13 +2130,138 @@ local function RoseInitStartBias(self, minor)
   );
 end
 
+-- ---------------------------------------------------------------------------
+-- City-state fallback (see the header). The stock __SetStartMinor returns a
+-- plot that passed every check or, failing that, the first plot by fertility
+-- that passed the most checks in order. The two distance checks come right
+-- after passable and land, so a fallback that fails one of them means no
+-- land plot of the region passes it; the wrapper then takes the plot that
+-- comes closest to keeping both. Nothing here draws from the random stream.
+-- ---------------------------------------------------------------------------
+local MINOR_DISTANCE_PASSED = 10000;  -- above any plot distance
+
+local function NearestDistance(plotIndex, placedPlots)
+  local nearest = -1;
+  for n = 1, #placedPlots do
+    local distance = Map.GetPlotDistance(plotIndex, placedPlots[n]:GetIndex());
+    if nearest < 0 or distance < nearest then
+      nearest = distance;
+    end
+  end
+  return nearest;
+end
+
+-- The stock distance limits (a city-state start is rejected up to and
+-- including each): the expressions of the stock buffers. Pass and fail
+-- still come from the buffers themselves; the limits only size a shortfall.
+local function MinorDistanceLimits(self)
+  local majorLimit = GlobalParameters.START_DISTANCE_MINOR_MAJOR_CIVILIZATION or 6;
+  if self.waterMap == true then
+    majorLimit = majorLimit - 1;
+  end
+  local minorLimit = GlobalParameters.START_DISTANCE_MINOR_CIVILIZATION_START or 5;
+  return majorLimit, minorLimit;
+end
+
+-- The spacing part of a city-state plot's rank, against the majors and
+-- against the city-states placed so far: MINOR_DISTANCE_PASSED when the
+-- stock buffer passes, else the shortfall, the number of tiles the plot is
+-- short of passing, as a negative number (larger is better).
+local function MinorSpacingRank(self, plot)
+  local majorLimit, minorLimit = MinorDistanceLimits(self);
+  local majorRank = MINOR_DISTANCE_PASSED;
+  if self:__MinorMajorCivBuffer(plot) ~= true then
+    majorRank = NearestDistance(plot:GetIndex(), self.majorCopy) - majorLimit - 1;
+  end
+  local minorRank = MINOR_DISTANCE_PASSED;
+  if self:__MinorMinorCivBuffer(plot) ~= true then
+    minorRank = NearestDistance(plot:GetIndex(), self.minorStartPlots) - minorLimit - 1;
+  end
+  return majorRank, minorRank;
+end
+
+-- The full rank of a passable land plot: the smaller of its two shortfalls
+-- (a plot one tile short against a capital and five short against a
+-- city-state ranks below one two short against the capital and clear of
+-- the city-states), then the larger, then the shortfall against the majors
+-- alone (of two plots equally short overall, the one less short of a
+-- capital wins), then the stock checks that follow the distance checks in
+-- the stock pick, then fertility (the value the stock pick sorts by), then
+-- the lowest plot index.
+local function MinorPlotRank(self, plot, plotIndex)
+  local majorRank, minorRank = MinorSpacingRank(self, plot);
+  local resourceOk = plot:GetResourceCount() == 0 or self:__BonusResource(plot) == true;
+  return {
+    math.min(majorRank, minorRank),
+    math.max(majorRank, minorRank),
+    majorRank,
+    self:__GetValidAdjacent(plot, 2) == true and 1 or 0,
+    self:__NaturalWonderBuffer(plot, true) == true and 1 or 0,
+    resourceOk and 1 or 0,
+    plot:GetFeatureType() ~= g_FEATURE_OASIS and 1 or 0,
+    self:__BaseFertility(plotIndex),
+    -plotIndex
+  };
+end
+
+local function RankGreater(left, right)
+  for n = 1, #left do
+    if left[n] ~= right[n] then
+      return left[n] > right[n];
+    end
+  end
+  return false;
+end
+
+local function RoseSetStartMinor(self, plots)
+  local plot = BaseSetStartMinor(self, plots);
+  if plot == nil or plots == nil or self.majorCopy == nil or self.minorStartPlots == nil then
+    return plot;
+  end
+  local stockMajor, stockMinor = MinorSpacingRank(self, plot);
+  if stockMajor == MINOR_DISTANCE_PASSED and stockMinor == MINOR_DISTANCE_PASSED then
+    return plot;
+  end
+
+  local best = nil;
+  local bestRank = nil;
+  for n = 1, #plots do
+    local candidate = Map.GetPlotByIndex(plots[n]);
+    if candidate ~= nil and candidate:IsImpassable() ~= true and candidate:IsWater() ~= true then
+      local rank = MinorPlotRank(self, candidate, plots[n]);
+      if bestRank == nil or RankGreater(rank, bestRank) then
+        best = candidate;
+        bestRank = rank;
+      end
+    end
+  end
+  if best == nil then
+    return plot;
+  end
+
+  local pickedMajor, pickedMinor = MinorSpacingRank(self, best);
+  print(
+    "RBS_MINOR_FALLBACK stock=" .. tostring(plot:GetIndex())
+    .. " picked=" .. tostring(best:GetIndex())
+    .. " stock_major=" .. tostring(NearestDistance(plot:GetIndex(), self.majorCopy))
+    .. " picked_major=" .. tostring(NearestDistance(best:GetIndex(), self.majorCopy))
+    .. " stock_minor=" .. tostring(NearestDistance(plot:GetIndex(), self.minorStartPlots))
+    .. " picked_minor=" .. tostring(NearestDistance(best:GetIndex(), self.minorStartPlots))
+    .. " major_check=" .. YesNo(pickedMajor == MINOR_DISTANCE_PASSED)
+    .. " minor_check=" .. YesNo(pickedMinor == MINOR_DISTANCE_PASSED)
+    .. " plots=" .. tostring(#plots)
+  );
+  return best;
+end
+
 function RoseBetterStarts.InstallStartBias()
   if RoseBetterStarts.StartBiasInstalled then
     return;
   end
   if AssignStartingPlots == nil
     or AssignStartingPlots.__SetStartMajor == nil
-    or AssignStartingPlots.__InitStartBias == nil then
+    or AssignStartingPlots.__InitStartBias == nil
+    or AssignStartingPlots.__SetStartMinor == nil then
     error("Rose Better Starts could not find the AssignStartingPlots methods to override");
   end
 
@@ -2122,6 +2270,8 @@ function RoseBetterStarts.InstallStartBias()
   RoseBetterStarts.StartBiasVersion = BIAS_VERSION;
   BaseSetStartMajor = AssignStartingPlots.__SetStartMajor;
   BaseInitStartBias = AssignStartingPlots.__InitStartBias;
+  BaseSetStartMinor = AssignStartingPlots.__SetStartMinor;
   AssignStartingPlots.__SetStartMajor = RoseSetStartMajor;
   AssignStartingPlots.__InitStartBias = RoseInitStartBias;
+  AssignStartingPlots.__SetStartMinor = RoseSetStartMinor;
 end
