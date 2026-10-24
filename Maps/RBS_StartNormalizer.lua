@@ -529,6 +529,7 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
   checksum = AddChecksum(checksum, skippedOceanStarts);
   checksum = AddChecksum(checksum, unsatisfiedCount);
   checksum = AddChecksum(checksum, RoseBetterStarts.BiasChecksum or 0);
+  checksum = AddChecksum(checksum, RoseBetterStarts.MinorChecksum or 0);
 
   print(
     "RBS_FINGERPRINT version=" .. tostring(VERSION)
@@ -543,6 +544,7 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
     .. " bias_version=" .. tostring(RoseBetterStarts.StartBiasVersion or 0)
     .. " bias_enabled=" .. tostring(RoseBetterStarts.StartBiasEnabled == true)
     .. " bias=" .. tostring(RoseBetterStarts.BiasChecksum or 0)
+    .. " minor=" .. tostring(RoseBetterStarts.MinorChecksum or 0)
     .. " checksum=" .. tostring(checksum)
   );
 end
@@ -628,6 +630,9 @@ function RoseBetterStarts.Install(baseMapFile)
     local spectators = AliveSpectators();
     local restore = function() end;
     RoseBetterStarts.SpectatorFilter = "none";
+    -- Set again by this generation's placement, if it runs.
+    RoseBetterStarts.BiasChecksum = nil;
+    RoseBetterStarts.MinorChecksum = nil;
     if #spectators > 0 then
       local okInstall, restoreOrError, before, after = pcall(InstallSpectatorFilter, spectators);
       local applied = false;

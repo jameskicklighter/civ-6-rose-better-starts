@@ -15,12 +15,13 @@
 -- This module replaces the two steps that decide that outcome:
 --   __SetStartMajor   the plot picked inside each region
 --   __InitStartBias   the civilization-to-plot matching (majors only)
--- and wraps one step of the city-state placement:
---   __SetStartMinor   the plot a city-state gets when no plot of its region
---                     keeps the stock distance from the starts already placed
+-- and the plot each city-state gets:
+--   __SetStartMinor   placed by zone (the majors' regions), not by the
+--                     engine's city-state regions
 -- Everything else is the stock code: region division, the validity checks
--- a start must pass, Balanced/Legendary resources, city-states (placed after
--- every major, as the stock script already does), and ocean starts.
+-- a start must pass, Balanced/Legendary resources, the order (city-states
+-- after every major, as the stock script already does), the city-state
+-- bias matching and ocean starts.
 --
 -- Rules:
 --   * A civilization's tier 1 and tier 2 rows are REQUIRED, all of them
@@ -106,6 +107,14 @@
 --     rule is lifted up to the listed count: a plot that fails only the
 --     desert cap stays a candidate that only they may take; every other
 --     civilization and the stock fallback keep the game's cap.
+--   * Tundra rows. The stock check also keeps a major out of the rows
+--     within START_MIN_Y and START_MAX_Y percent of the map's edges (15 on
+--     the stock scripts), which is where the tundra lies, so on a map with
+--     little land near those rows Canada and Russia find no tundra start.
+--     For the civilizations in CIV_START_EDGE_PERCENT the limit is that
+--     percent instead; a plot outside the stock rows that passes every
+--     other stock check stays a candidate only they may take, as with the
+--     desert cap (and a plot outside both needs both exceptions).
 --   * Crowding. Picks are made region by region, so a pick can leave a
 --     later region with no satisfying plot outside the stock buffer (its
 --     civilization then falls to the stock pick, whose fallback plot fails
@@ -123,29 +132,36 @@
 --     when it has none to meet. The displaced civilizations take the plots
 --     left over. The stock script matches this way too, over plots chosen
 --     without any bias; here it only repairs what crowding spoiled.
---   * City-state fallback. The stock city-state pick, when no plot of a
---     city-state's region passes every check, returns the first plot by
---     fertility that passed the most checks in order (passable, land, the
---     distance from every major, the distance from every city-state, the
---     adjacency check, the natural wonder buffer, the resource check). When
---     no plot of the region keeps the distance from the majors, that is the
---     most fertile land plot however close to a capital. Such a fallback is
---     replaced by the region's passable land plot that ranks highest by: the
---     smaller of its two shortfalls against the stock distance checks (the
---     tiles it is short of the distance from every major, and of the
---     distance from every city-state placed so far; a check that passes is
---     never short), then the larger, then the shortfall against the majors
---     alone (of two plots equally short overall, the one less short of a
---     capital wins), then the adjacency check, the natural wonder buffer,
---     the resource check, no oasis, fertility, lowest plot index. A stock
---     pick that keeps both distances is never changed. The rule can set a
---     city-state a tile or two nearer a capital than the stock fallback
---     would, when that keeps it farther from another city-state. This
---     applies with or without start biases (IGNORESTARTBIAS leaves it on).
+--   * City-states by zone. The stock script places each city-state in a
+--     region the engine divides for city-states, at the region's most
+--     fertile plot that passes every check (passable, land, the distance
+--     from every major, the distance from every city-state, the adjacency
+--     check, the natural wonder buffer, the resource check, no oasis), so
+--     one civilization's land can hold several city-states and another's
+--     none. Here the zones are the majors' regions: each city-state goes to
+--     the zone holding the fewest city-states so far among those with a
+--     plot passing every stock check, then the zone with the most such
+--     plots, then the lower region index, and takes that zone's such plot
+--     that leaves the fewest other zones holding no more city-states
+--     without any such plot (every one within the city-state distance of
+--     it), then the most fertile (the ring fertility the majors use;
+--     lowest index on a tie). When no zone has one, the land outside every region is
+--     tried; then, by the same zone rule, the plots keeping both stock
+--     distances but failing a later check (the same look-ahead, then the
+--     most checks passed, then fertility); and when no land plot keeps both distances, the land
+--     plot that ranks highest by: the smaller of its two shortfalls
+--     against them (the tiles it is short of the distance from every major,
+--     and of the distance from every city-state placed so far; a check that
+--     passes is never short), then the larger, then the shortfall against
+--     the majors alone, then the later checks, fertility, lowest index.
+--     The stock loop still decides how many city-states are placed. This
+--     applies with or without start biases (IGNORESTARTBIAS leaves it on);
+--     without a recorded major region the stock pick decides, with that
+--     shortfall rule replacing a fallback that fails a distance check.
 
 RoseBetterStarts = RoseBetterStarts or {};
 
-local BIAS_VERSION = 3;
+local BIAS_VERSION = 4;
 local ENFORCE_START_BIASES = true;
 
 -- Tiers 1 and 2 are always required, all of them together; tier 3 only when
@@ -191,6 +207,15 @@ local CIV_TERRAIN_ADJACENT_MINIMUM = {
 -- other stock check; 7 lifts the cap entirely.
 local CIV_ADJACENT_DESERT_LIMIT = {
   CIVILIZATION_MALI = 7
+};
+-- The stock start check keeps a major out of the rows within START_MIN_Y and
+-- START_MAX_Y percent of the bottom and top edges (15 on the stock scripts),
+-- which is where the tundra lies. A civilization listed here may start
+-- outside those rows but within this percent of the edge, when the plot
+-- passes every other stock check (the snow cap still keeps it off the ice).
+local CIV_START_EDGE_PERCENT = {
+  CIVILIZATION_CANADA = 5,
+  CIVILIZATION_RUSSIA = 5
 };
 -- Valid plots kept per region, in fertility order. The stock pick walks the
 -- whole region until one plot clears every check, so a low cap would leave
@@ -520,10 +545,26 @@ local function LoadBiasProfiles()
     profile.DesertLimit = CIV_ADJACENT_DESERT_LIMIT[civType];
   end
 
+  -- Edge rows: likewise.
+  local edgeCivs = {};
+  for civType, _ in pairs(CIV_START_EDGE_PERCENT) do
+    edgeCivs[#edgeCivs + 1] = civType;
+  end
+  table.sort(edgeCivs);
+  for n = 1, #edgeCivs do
+    local civType = edgeCivs[n];
+    local profile = profiles[civType];
+    if profile == nil then
+      profile = { CivType = civType, Tiers = {}, RequiredTiers = {}, StrongestTier = nil };
+      profiles[civType] = profile;
+    end
+    profile.EdgePercent = CIV_START_EDGE_PERCENT[civType];
+  end
+
   -- Strict profiles: a copy with the raised adjacency minimum on the
   -- passable terrain groups, tried before the standard profile; Base points
   -- back to the standard one for the fallback. Built last so the copy
-  -- carries the tile bonus and the desert limit.
+  -- carries the tile bonus, the desert limit and the edge rows.
   local strictCivs = {};
   for civType, _ in pairs(CIV_TERRAIN_ADJACENT_MINIMUM) do
     strictCivs[#strictCivs + 1] = civType;
@@ -536,7 +577,8 @@ local function LoadBiasProfiles()
     if profile ~= nil and #profile.Tiers > 0 then
       local strict = {
         CivType = civType, Tiers = {}, RequiredTiers = profile.RequiredTiers, StrongestTier = profile.StrongestTier,
-        TileBonus = profile.TileBonus, DesertLimit = profile.DesertLimit, Base = profile
+        TileBonus = profile.TileBonus, DesertLimit = profile.DesertLimit, EdgePercent = profile.EdgePercent,
+        Base = profile
       };
       local raised = false;
       for t = 1, #profile.Tiers do
@@ -691,12 +733,43 @@ local function InBand(fertility, bestFertility)
   return fertility * 100 >= bestFertility * (100 - PREFERENCE_BAND_PERCENT);
 end
 
--- The stock __GetValidAdjacent for a major start (minor 0), with the desert
--- rule separated: returns whether the plot passes it all, whether it passes
--- everything but the desert cap, and the desert count (the plot and its six
--- neighbours). Kept in step with the stock function: the row limits, the
--- impassable and water limits, the desert and snow caps, and the Balanced
--- start's stricter values.
+-- The stock row limit of a major start: a plot within minPercent of the
+-- bottom edge or maxPercent of the top edge is rejected, and so is every
+-- plot when both limits are 0 rows (the stock expression).
+local function RowsAllowed(y, gridHeight, minPercent, maxPercent)
+  local maxRows = math.ceil(gridHeight * maxPercent / 100);
+  local minRows = math.ceil(gridHeight * minPercent / 100);
+  return not (y <= minRows or y > gridHeight - maxRows or (maxRows == 0 and minRows == 0));
+end
+
+-- The map script's row limits (START_MIN_Y, START_MAX_Y), read when the plan
+-- is made; the edge exception never widens a limit beyond them.
+local StockStartRows = { Min = 0, Max = 0 };
+
+-- Whether a plot's row is open to a civilization with this edge percent.
+local function EdgeRowsAllowed(y, percent)
+  local _, gridHeight = Map.GetGridSize();
+  return RowsAllowed(y, gridHeight, math.min(StockStartRows.Min, percent), math.min(StockStartRows.Max, percent));
+end
+
+-- The smallest edge percent any listed civilization has (nil: none).
+local function SmallestEdgePercent()
+  local smallest = nil;
+  for _, percent in pairs(CIV_START_EDGE_PERCENT) do
+    if smallest == nil or percent < smallest then
+      smallest = percent;
+    end
+  end
+  return smallest;
+end
+
+-- The stock __GetValidAdjacent for a major start (minor 0), with the row
+-- limit and the desert rule separated: returns whether the plot passes the
+-- other rules, whether it passes the desert cap, whether its row is within
+-- the stock limits, and the desert count (the plot and its six neighbours).
+-- The stock function passes a plot only when all three pass. Kept in step
+-- with it: the row limits, the impassable and water limits, the desert and
+-- snow caps, and the Balanced start's stricter values.
 local function ValidAdjacentDetail(self, plot)
   local impassable = 0;
   local water = 0;
@@ -710,11 +783,7 @@ local function ValidAdjacentDetail(self, plot)
   if terrainType == g_TERRAIN_TYPE_DESERT or terrainType == g_TERRAIN_TYPE_DESERT_HILLS then
     desert = desert + 1;
   end
-  local maxRows = math.ceil(gridHeight * self.uiStartMaxY / 100);
-  local minRows = math.ceil(gridHeight * self.uiStartMinY / 100);
-  if plot:GetY() <= minRows or plot:GetY() > gridHeight - maxRows or (maxRows == 0 and minRows == 0) then
-    return false, false, desert;
-  end
+  local rowsOk = RowsAllowed(plot:GetY(), gridHeight, self.uiStartMinY, self.uiStartMaxY);
   for direction = 0, DirectionTypes.NUM_DIRECTION_TYPES - 1, 1 do
     local adjacentPlot = Map.GetAdjacentPlot(plot:GetX(), plot:GetY(), direction);
     if adjacentPlot ~= nil then
@@ -756,52 +825,60 @@ local function ValidAdjacentDetail(self, plot)
     rejected = true;
   end
   local desertRejected = (desert > 2 - balancedStart);
-  return (not rejected) and (not desertRejected), not rejected, desert;
+  return not rejected, not desertRejected, rowsOk, desert;
 end
 
 -- The stock __SetStartMajor checks, in the stock order, without the distance
 -- check against other majors (applied at pick time against the starts
--- already placed). Returns "ok", "desert" (fails only the desert cap of the
--- adjacency check, usable by a civilization in CIV_ADJACENT_DESERT_LIMIT)
--- or "fail", and the desert count.
+-- already placed). Returns "ok", "restricted" (fails only the desert cap or
+-- the row limit of the adjacency check, or both, usable by a civilization
+-- in CIV_ADJACENT_DESERT_LIMIT or CIV_START_EDGE_PERCENT that covers it) or
+-- "fail", the desert count, and whether the plot is desert-only and
+-- edge-only.
 local function CheckPlot(self, plot)
   if plot:IsImpassable() == true then
-    return "fail", 0;
+    return "fail", 0, false, false;
   end
   if plot:IsWater() == true then
-    return "fail", 0;
+    return "fail", 0, false, false;
   end
   if (math.ceil(self.iDefaultNumberMajor * 1.25) + self.iDefaultNumberMinor > self.iNumMinorCivs + self.iNumMajorCivs) then
     if self:__LuxuryBuffer(plot) == false then
-      return "fail", 0;
+      return "fail", 0, false, false;
     end
   end
   if self:__GetWaterCheck(plot) == false then
-    return "fail", 0;
+    return "fail", 0, false, false;
   end
-  local passesAll, passesExceptDesert, desert = ValidAdjacentDetail(self, plot);
-  if not passesExceptDesert then
-    return "fail", desert;
+  local rulesOk, desertOk, rowsOk, desert = ValidAdjacentDetail(self, plot);
+  if not rulesOk then
+    return "fail", desert, false, false;
+  end
+  if not rowsOk then
+    local smallest = SmallestEdgePercent();
+    if smallest == nil or not EdgeRowsAllowed(plot:GetY(), smallest) then
+      return "fail", desert, false, false;
+    end
   end
   if self:__NaturalWonderBuffer(plot, false) == false then
-    return "fail", desert;
+    return "fail", desert, false, false;
   end
   if plot:GetResourceCount() > 0 and not self:__BonusResource(plot) then
-    return "fail", desert;
+    return "fail", desert, false, false;
   end
   if plot:GetFeatureType() == g_FEATURE_OASIS then
-    return "fail", desert;
+    return "fail", desert, false, false;
   end
-  if passesAll then
+  if desertOk and rowsOk then
     if self:__GetValidAdjacent(plot, 0) ~= true and RoseBetterStarts.AdjacencyMismatchPrinted ~= true then
       -- The ported check and the instance's own disagree: another mod may
       -- have replaced __GetValidAdjacent. Printed once; the port stands.
       RoseBetterStarts.AdjacencyMismatchPrinted = true;
       print("RBS_BIAS_CHECK_MISMATCH plot=" .. tostring(plot:GetIndex()));
     end
-    return "ok", desert;
+    return "ok", desert, false, false;
   end
-  return "desert", desert;
+  return "restricted", desert, not desertOk, not rowsOk;
 end
 
 -- The stock __MajorCivBuffer rejects a plot within this distance of another
@@ -875,7 +952,7 @@ local function CollectRegionCandidates(self, regionIndex, plotIndices)
     local plotIndex = plotIndices[n];
     local plot = Map.GetPlotByIndex(plotIndex);
     if plot ~= nil then
-      local status, desert = CheckPlot(self, plot);
+      local status, desert, desertOnly, edgeOnly = CheckPlot(self, plot);
       if status ~= "fail" then
         valid[#valid + 1] = {
           Plot = plot,
@@ -887,8 +964,9 @@ local function CollectRegionCandidates(self, regionIndex, plotIndices)
           Weighted = self:__WeightedFertility(plotIndex, regionIndex, true),
           Nearby = nil,
           Blocked = false,
-          DesertOnly = (status == "desert"),
-          DesertCount = desert
+          DesertOnly = desertOnly,
+          DesertCount = desert,
+          EdgeOnly = edgeOnly
         };
       end
     end
@@ -919,14 +997,24 @@ local function RobustnessKey(best)
 end
 
 -- Whether a civilization may take a candidate: every civilization may take
--- a plot that passes the stock checks; a plot that fails only the stock
--- desert cap is open to a civilization whose DesertLimit covers its count.
+-- a plot that passes the stock checks; a plot that fails the stock desert
+-- cap is open to a civilization whose DesertLimit covers its count, and a
+-- plot outside the stock rows to one whose EdgePercent covers its row (a
+-- plot failing both needs both).
 local function AllowedFor(profile, candidate)
-  if candidate.DesertOnly ~= true then
-    return true;
+  if candidate.DesertOnly == true then
+    local limit = profile.DesertLimit;
+    if limit == nil or (candidate.DesertCount or 0) > limit then
+      return false;
+    end
   end
-  local limit = profile.DesertLimit;
-  return limit ~= nil and (candidate.DesertCount or 0) <= limit;
+  if candidate.EdgeOnly == true then
+    local percent = profile.EdgePercent;
+    if percent == nil or not EdgeRowsAllowed(candidate.Y, percent) then
+      return false;
+    end
+  end
+  return true;
 end
 
 -- A civilization's tile bonus at a candidate: its bonus value for the plot's
@@ -1130,6 +1218,7 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
   local regionCount = self.iNumMajorCivs;
   local regions = {};
   local candidateTotal = 0;
+  StockStartRows = { Min = self.uiStartMinY or 0, Max = self.uiStartMaxY or 0 };
 
   for r = 0, regionCount - 1 do
     local plotIndices = nil;
@@ -1143,12 +1232,16 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
     regions[r] = { Index = r, Candidates = candidates };
     local weightedPositive = 0;
     local desertOnly = 0;
+    local edgeOnly = 0;
     for n = 1, #candidates do
       if (candidates[n].Weighted or 0) > 0 then
         weightedPositive = weightedPositive + 1;
       end
       if candidates[n].DesertOnly then
         desertOnly = desertOnly + 1;
+      end
+      if candidates[n].EdgeOnly then
+        edgeOnly = edgeOnly + 1;
       end
     end
     local plotCount = 0;
@@ -1161,6 +1254,7 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
       .. " candidates=" .. tostring(#candidates)
       .. " weighted_positive=" .. tostring(weightedPositive)
       .. " desert_only=" .. tostring(desertOnly)
+      .. " edge_only=" .. tostring(edgeOnly)
     );
   end
 
@@ -1675,6 +1769,7 @@ local function PrintPlaced(entry, plot)
     .. " spacing=" .. spacing
     .. " desert=" .. tostring(entry.DesertCount or -1)
     .. " level=" .. tostring(entry.Level or "-")
+    .. " edge=" .. YesNo(entry.EdgeOnly == true)
   );
 end
 
@@ -1694,6 +1789,15 @@ end
 -- civilization or sits too close to a start already placed; PREFERENCE, no
 -- enforceable tier, placed by fertility and preference; BASE, the stock pick.
 local function RoseSetStartMajor(self, plots, regionIndex)
+  -- Each region's plots, as the stock loop passes them: the zones the
+  -- city-state placement balances over, with or without biases.
+  if plots ~= nil and regionIndex ~= nil then
+    self.RoseMajorRegionPlots = self.RoseMajorRegionPlots or {};
+    if self.RoseMajorRegionPlots[regionIndex] == nil then
+      self.RoseMajorRegionPlots[regionIndex] = plots;
+    end
+  end
+
   if not ENFORCE_START_BIASES or self.noStartBiases then
     return BaseSetStartMajor(self, plots, regionIndex);
   end
@@ -1743,6 +1847,8 @@ local function RoseSetStartMajor(self, plots, regionIndex)
     entry.Bonus = best.Bonus;
     entry.DesertCount = best.Candidate.DesertCount;
     entry.DesertOnly = (best.Candidate.DesertOnly == true);
+    entry.EdgeOnly = (best.Candidate.EdgeOnly == true);
+    entry.PlotY = best.Candidate.Y;
     entry.PlotFertility = best.Candidate.PlotFertility;
     entry.Weighted = best.Candidate.Weighted;
     entry.BestFertility = best.BestFertility;
@@ -1789,8 +1895,9 @@ local function RoseSetStartMajor(self, plots, regionIndex)
     entry.BestFertility = entry.Fertility;
     entry.Forced = not FarFromPlaced(plot:GetIndex(), self.majorStartPlots, limit);
     entry.FailedCheck = FirstFailedCheck(self, plot, limit);
-    local _, _, desertCount = ValidAdjacentDetail(self, plot);
+    local _, _, _, desertCount = ValidAdjacentDetail(self, plot);
     entry.DesertCount = desertCount;
+    entry.PlotY = plot:GetY();
   end
   PrintPlaced(entry, plot);
   if plot ~= nil and plan.RegionCount ~= nil then
@@ -1826,14 +1933,17 @@ local function RematchStarts(self, plan)
     end
   end
 
-  -- A plot that only a desert civilization may hold (picked above the stock
-  -- desert cap) is never handed to another civilization.
+  -- A plot that only a desert or edge civilization may hold (picked above
+  -- the stock desert cap or outside the stock rows) is never handed to a
+  -- civilization the exception does not cover.
   local function PlotAllowed(entry, plot)
     local held = holder[plot:GetIndex()];
-    if held == nil or held.DesertOnly ~= true then
+    if held == nil or (held.DesertOnly ~= true and held.EdgeOnly ~= true) then
       return true;
     end
-    return AllowedFor(entry.Profile or EMPTY_PROFILE, { DesertOnly = true, DesertCount = held.DesertCount or 0 });
+    return AllowedFor(entry.Profile or EMPTY_PROFILE, {
+      DesertOnly = held.DesertOnly, DesertCount = held.DesertCount or 0, EdgeOnly = held.EdgeOnly, Y = held.PlotY
+    });
   end
 
   local nearbyOf = {};
@@ -1915,11 +2025,13 @@ local function RematchStarts(self, plan)
     end
     return false;
   end
-  -- A civilization holding a plot above the stock desert cap keeps it:
-  -- freed, that plot could only go to a civilization the cap refuses it to.
+  -- A civilization holding a plot above the stock desert cap or outside the
+  -- stock rows keeps it: freed, that plot could only go to a civilization
+  -- the stock rule refuses it to.
   for n = 1, #entries do
     local entry = entries[n];
-    if #entry.Enforced > 0 and entry.OwnPlot ~= nil and matched[entry.ListIndex] == nil and entry.DesertOnly ~= true then
+    if #entry.Enforced > 0 and entry.OwnPlot ~= nil and matched[entry.ListIndex] == nil
+      and entry.DesertOnly ~= true and entry.EdgeOnly ~= true then
       Augment(entry, {});
     end
   end
@@ -2131,12 +2243,12 @@ local function RoseInitStartBias(self, minor)
 end
 
 -- ---------------------------------------------------------------------------
--- City-state fallback (see the header). The stock __SetStartMinor returns a
--- plot that passed every check or, failing that, the first plot by fertility
--- that passed the most checks in order. The two distance checks come right
--- after passable and land, so a fallback that fails one of them means no
--- land plot of the region passes it; the wrapper then takes the plot that
--- comes closest to keeping both. Nothing here draws from the random stream.
+-- City-states (see the header). The stock __SetStartMinor returns a plot of
+-- the engine's city-state region that passed every check or, failing that,
+-- the first plot by fertility that passed the most checks in order. The
+-- zone placement below replaces it; the stock pick with the distance
+-- fallback remains for a generation where no major region was recorded.
+-- Nothing here draws from the random stream.
 -- ---------------------------------------------------------------------------
 local MINOR_DISTANCE_PASSED = 10000;  -- above any plot distance
 
@@ -2186,9 +2298,9 @@ end
 -- the city-states), then the larger, then the shortfall against the majors
 -- alone (of two plots equally short overall, the one less short of a
 -- capital wins), then the stock checks that follow the distance checks in
--- the stock pick, then fertility (the value the stock pick sorts by), then
--- the lowest plot index.
-local function MinorPlotRank(self, plot, plotIndex)
+-- the stock pick, then fertility (the value the stock pick sorts by unless
+-- one is given), then the lowest plot index.
+local function MinorPlotRank(self, plot, plotIndex, fertility)
   local majorRank, minorRank = MinorSpacingRank(self, plot);
   local resourceOk = plot:GetResourceCount() == 0 or self:__BonusResource(plot) == true;
   return {
@@ -2199,7 +2311,7 @@ local function MinorPlotRank(self, plot, plotIndex)
     self:__NaturalWonderBuffer(plot, true) == true and 1 or 0,
     resourceOk and 1 or 0,
     plot:GetFeatureType() ~= g_FEATURE_OASIS and 1 or 0,
-    self:__BaseFertility(plotIndex),
+    fertility or self:__BaseFertility(plotIndex),
     -plotIndex
   };
 end
@@ -2213,7 +2325,11 @@ local function RankGreater(left, right)
   return false;
 end
 
-local function RoseSetStartMinor(self, plots)
+-- The stock pick of the engine's city-state region; a stock fallback that
+-- fails a distance check means no land plot of the region passes it, and is
+-- replaced by the region's passable land plot that comes closest to
+-- keeping both (MinorPlotRank).
+local function StockMinorWithFallback(self, plots)
   local plot = BaseSetStartMinor(self, plots);
   if plot == nil or plots == nil or self.majorCopy == nil or self.minorStartPlots == nil then
     return plot;
@@ -2254,6 +2370,343 @@ local function RoseSetStartMinor(self, plots)
   return best;
 end
 
+-- Zone placement. The zones are the major regions (one per civilization,
+-- as the stock loop passed their plots to __SetStartMajor); the land in no
+-- region forms one more zone used only when no region can take a
+-- city-state. Levels of a plot: MINOR_LEVEL_FULL passes every stock
+-- city-state check, MINOR_LEVEL_SPACED keeps both stock distances but fails
+-- a later check, below that it keeps neither.
+local MINOR_OUTSIDE_ZONE = -1;
+local MINOR_LEVEL_FULL = 2;
+local MINOR_LEVEL_SPACED = 1;
+local MINOR_LEVEL_LABELS = { [0] = "short", [1] = "spaced", [2] = "full" };
+
+-- Every passable land plot a city-state may take, by zone (a plot listed by
+-- two regions belongs to the first). Per plot, what does not change while
+-- city-states are placed: the stock distance from the majors (all placed by
+-- now) and the stock checks after the two distance checks. Fertility is
+-- read when first needed.
+local function BuildMinorPlan(self)
+  local regionPlots = self.RoseMajorRegionPlots;
+  if regionPlots == nil or self.majorCopy == nil or self.minorStartPlots == nil then
+    return nil;
+  end
+  local plan = { Zones = {}, Records = {}, Synced = 0, Picks = 0, LevelCounts = { [0] = 0, [1] = 0, [2] = 0 }, Checksum = 17 };
+  RoseBetterStarts.MinorChecksum = plan.Checksum;
+  local zoneOf = {};
+  local function AddPlot(zone, plotIndex)
+    if zoneOf[plotIndex] ~= nil then
+      return;
+    end
+    local plot = Map.GetPlotByIndex(plotIndex);
+    if plot == nil or plot:IsImpassable() == true or plot:IsWater() == true then
+      return;
+    end
+    zoneOf[plotIndex] = zone.Index;
+    local record = {
+      Plot = plot,
+      PlotIndex = plotIndex,
+      Y = plot:GetY(),
+      Zone = zone,
+      MajorOk = (self:__MinorMajorCivBuffer(plot) == true),
+      StaticOk = (self:__GetValidAdjacent(plot, 2) == true
+        and self:__NaturalWonderBuffer(plot, true) == true
+        and (plot:GetResourceCount() == 0 or self:__BonusResource(plot) == true)
+        and plot:GetFeatureType() ~= g_FEATURE_OASIS),
+      Blocked = false,
+      Fertility = nil
+    };
+    zone.Records[#zone.Records + 1] = record;
+    plan.Records[#plan.Records + 1] = record;
+  end
+
+  for r = 0, (self.iNumMajorCivs or 0) - 1 do
+    local plots = regionPlots[r];
+    if plots ~= nil then
+      local zone = { Index = r, Records = {}, Count = 0, Live = 0 };
+      plan.Zones[#plan.Zones + 1] = zone;
+      for n = 1, #plots do
+        AddPlot(zone, plots[n]);
+      end
+    end
+  end
+  if #plan.Zones == 0 then
+    return nil;
+  end
+  local outside = { Index = MINOR_OUTSIDE_ZONE, Records = {}, Count = 0, Live = 0 };
+  plan.Outside = outside;
+  for plotIndex = 0, Map.GetPlotCount() - 1 do
+    AddPlot(outside, plotIndex);
+  end
+
+  local sizes = {};
+  for z = 1, #plan.Zones do
+    sizes[z] = tostring(plan.Zones[z].Index) .. ":" .. tostring(#plan.Zones[z].Records);
+  end
+  print(
+    "RBS_MINOR_BEGIN minors=" .. tostring(self.iNumMinorCivs or 0)
+    .. " zones=" .. tostring(#plan.Zones)
+    .. " zone_plots=" .. table.concat(sizes, ",")
+    .. " outside_plots=" .. tostring(#outside.Records)
+  );
+  return plan;
+end
+
+local function MinorFertility(self, record)
+  if record.Fertility == nil then
+    record.Fertility = RingFertility(self, record.Plot);
+  end
+  return record.Fertility;
+end
+
+-- Marks the plots within the stock city-state distance of every city-state
+-- placed since the last call (the list the stock buffer reads). A hex
+-- distance is at least the row difference, which filters most pairs.
+local function SyncMinorBlocks(plan, placedPlots, limit)
+  for n = plan.Synced + 1, #placedPlots do
+    local placedIndex = placedPlots[n]:GetIndex();
+    local placedY = placedPlots[n]:GetY();
+    local records = plan.Records;
+    for k = 1, #records do
+      local record = records[k];
+      if record.Blocked ~= true and math.abs(record.Y - placedY) <= limit
+        and Map.GetPlotDistance(placedIndex, record.PlotIndex) <= limit then
+        record.Blocked = true;
+      end
+    end
+  end
+  plan.Synced = #placedPlots;
+end
+
+local function MinorLevel(record)
+  if record.MajorOk ~= true or record.Blocked == true then
+    return 0;
+  end
+  if record.StaticOk then
+    return MINOR_LEVEL_FULL;
+  end
+  return MINOR_LEVEL_SPACED;
+end
+
+-- The zone the next city-state goes to: among the zones with a plot at the
+-- level or above, the one holding the fewest city-states so far, then the
+-- one with the most such plots, then the first in order. Sets each zone's
+-- Live count.
+local function ChooseMinorZone(zones, level)
+  local chosen = nil;
+  for z = 1, #zones do
+    local zone = zones[z];
+    local live = 0;
+    for k = 1, #zone.Records do
+      if MinorLevel(zone.Records[k]) >= level then
+        live = live + 1;
+      end
+    end
+    zone.Live = live;
+    if live > 0 then
+      if chosen == nil or zone.Count < chosen.Count or (zone.Count == chosen.Count and live > chosen.Live) then
+        chosen = zone;
+      end
+    end
+  end
+  return chosen;
+end
+
+-- The plots at the level of every other region zone holding no more
+-- city-states than the chosen one: the zones a pick could box in.
+local function MinorZonesAtRisk(plan, chosen, level)
+  local groups = {};
+  for z = 1, #plan.Zones do
+    local zone = plan.Zones[z];
+    if zone ~= chosen and zone.Count <= chosen.Count then
+      local live = {};
+      for k = 1, #zone.Records do
+        if MinorLevel(zone.Records[k]) >= level then
+          live[#live + 1] = zone.Records[k];
+        end
+      end
+      if #live > 0 then
+        groups[#groups + 1] = live;
+      end
+    end
+  end
+  return groups;
+end
+
+-- How many of those zones a plot would leave without a plot at the level:
+-- every one of their plots within the stock city-state distance of it.
+local function MinorBoxes(record, groups, limit)
+  local boxes = 0;
+  for g = 1, #groups do
+    local live = groups[g];
+    local all = true;
+    for n = 1, #live do
+      local other = live[n];
+      if math.abs(other.Y - record.Y) > limit or Map.GetPlotDistance(record.PlotIndex, other.PlotIndex) > limit then
+        all = false;
+        break;
+      end
+    end
+    if all then
+      boxes = boxes + 1;
+    end
+  end
+  return boxes;
+end
+
+-- The zone's best plot at the level: fewest zones boxed in (MinorBoxes),
+-- then by fertility at MINOR_LEVEL_FULL, by the stock checks it passes and
+-- then fertility at MINOR_LEVEL_SPACED; the lowest plot index on a tie.
+-- Returns the plot and its box count.
+local function BestMinorRecord(self, plan, zone, level, limit)
+  local groups = MinorZonesAtRisk(plan, zone, level);
+  local best = nil;
+  local bestRank = nil;
+  local bestBoxes = 0;
+  for k = 1, #zone.Records do
+    local record = zone.Records[k];
+    if MinorLevel(record) >= level then
+      local boxes = MinorBoxes(record, groups, limit);
+      local rank = nil;
+      if level == MINOR_LEVEL_FULL then
+        rank = { -boxes, MinorFertility(self, record), -record.PlotIndex };
+      else
+        rank = MinorPlotRank(self, record.Plot, record.PlotIndex, MinorFertility(self, record));
+        table.insert(rank, 1, -boxes);
+      end
+      if bestRank == nil or RankGreater(rank, bestRank) then
+        best = record;
+        bestRank = rank;
+        bestBoxes = boxes;
+      end
+    end
+  end
+  return best, bestBoxes;
+end
+
+local function ZoneList(zones, field)
+  local parts = {};
+  for z = 1, #zones do
+    parts[z] = tostring(zones[z][field]);
+  end
+  return table.concat(parts, ",");
+end
+
+-- Replaces AssignStartingPlots.__SetStartMinor. Each call places the next
+-- city-state: a plot passing every stock check in the zone the rules above
+-- choose, else one keeping both stock distances (zone rule again), else the
+-- land plot closest to keeping them, anywhere (MinorPlotRank). The engine's
+-- city-state region passed in is not used; the stock loop still decides how
+-- many calls are made.
+local function RoseSetStartMinor(self, plots)
+  if self.RoseMinorPlan == nil then
+    self.RoseMinorPlan = BuildMinorPlan(self) or false;
+  end
+  local plan = self.RoseMinorPlan;
+  if plan == false then
+    return StockMinorWithFallback(self, plots);
+  end
+
+  local _, minorLimit = MinorDistanceLimits(self);
+  SyncMinorBlocks(plan, self.minorStartPlots, minorLimit);
+
+  local counts = ZoneList(plan.Zones, "Count");
+  local record = nil;
+  local level = 0;
+  local boxes = 0;
+  local live = "-";
+  for _, tryLevel in ipairs({ MINOR_LEVEL_FULL, MINOR_LEVEL_SPACED }) do
+    local zone = ChooseMinorZone(plan.Zones, tryLevel);
+    live = ZoneList(plan.Zones, "Live");
+    if zone == nil then
+      zone = ChooseMinorZone({ plan.Outside }, tryLevel);
+    end
+    if zone ~= nil then
+      record, boxes = BestMinorRecord(self, plan, zone, tryLevel, minorLimit);
+      level = tryLevel;
+      break;
+    end
+  end
+  if record == nil then
+    local bestRank = nil;
+    for k = 1, #plan.Records do
+      local candidate = plan.Records[k];
+      local rank = MinorPlotRank(self, candidate.Plot, candidate.PlotIndex, MinorFertility(self, candidate));
+      if bestRank == nil or RankGreater(rank, bestRank) then
+        record = candidate;
+        bestRank = rank;
+      end
+    end
+  end
+  if record == nil then
+    return StockMinorWithFallback(self, plots);
+  end
+
+  local plot = record.Plot;
+  if level > 0 and (self:__MinorMajorCivBuffer(plot) ~= true or self:__MinorMinorCivBuffer(plot) ~= true)
+    and RoseBetterStarts.MinorMismatchPrinted ~= true then
+    -- The cached distances and the stock buffers disagree. Printed once.
+    RoseBetterStarts.MinorMismatchPrinted = true;
+    print("RBS_MINOR_CHECK_MISMATCH plot=" .. tostring(plot:GetIndex()));
+  end
+  if level == MINOR_LEVEL_FULL then
+    -- As the stock pick does for a plot that passes every check.
+    self:__TryToRemoveBonusResource(plot);
+  end
+  record.Zone.Count = record.Zone.Count + 1;
+  plan.Picks = plan.Picks + 1;
+  plan.LevelCounts[level] = plan.LevelCounts[level] + 1;
+  plan.Checksum = AddChecksum(plan.Checksum, plot:GetIndex() + 1);
+  RoseBetterStarts.MinorChecksum = plan.Checksum;
+
+  local regionPlotCount = 0;
+  if plots ~= nil then
+    regionPlotCount = #plots;
+  end
+  print(
+    "RBS_MINOR_PLACED n=" .. tostring(plan.Picks)
+    .. " plot=" .. tostring(plot:GetIndex())
+    .. " zone=" .. tostring(record.Zone.Index)
+    .. " level=" .. MINOR_LEVEL_LABELS[level]
+    .. " counts=" .. counts
+    .. " live=" .. live
+    .. " boxes=" .. tostring(boxes)
+    .. " major_distance=" .. tostring(NearestDistance(plot:GetIndex(), self.majorCopy))
+    .. " minor_distance=" .. tostring(NearestDistance(plot:GetIndex(), self.minorStartPlots))
+    .. " fertility=" .. tostring(MinorFertility(self, record))
+    .. " region_plots=" .. tostring(regionPlotCount)
+  );
+  return plot;
+end
+
+-- The city-state summary, printed when the stock script matches city-states
+-- to their plots (after its placement loop; not reached when the map
+-- ignores start biases).
+local function PrintMinorEnd(self)
+  local plan = self.RoseMinorPlan;
+  if plan == nil or plan == false then
+    return;
+  end
+  local checksum = plan.Checksum;
+  print(
+    "RBS_MINOR_END minors=" .. tostring(self.iNumMinorCivs or 0)
+    .. " placed=" .. tostring(plan.Picks)
+    .. " counts=" .. ZoneList(plan.Zones, "Count")
+    .. " outside=" .. tostring(plan.Outside.Count)
+    .. " full=" .. tostring(plan.LevelCounts[MINOR_LEVEL_FULL])
+    .. " spaced=" .. tostring(plan.LevelCounts[MINOR_LEVEL_SPACED])
+    .. " short=" .. tostring(plan.LevelCounts[0])
+    .. " checksum=" .. tostring(checksum)
+  );
+end
+
+local function RoseInitStartBiasAll(self, minor)
+  if minor == true then
+    PrintMinorEnd(self);
+  end
+  return RoseInitStartBias(self, minor);
+end
+
 function RoseBetterStarts.InstallStartBias()
   if RoseBetterStarts.StartBiasInstalled then
     return;
@@ -2272,6 +2725,6 @@ function RoseBetterStarts.InstallStartBias()
   BaseInitStartBias = AssignStartingPlots.__InitStartBias;
   BaseSetStartMinor = AssignStartingPlots.__SetStartMinor;
   AssignStartingPlots.__SetStartMajor = RoseSetStartMajor;
-  AssignStartingPlots.__InitStartBias = RoseInitStartBias;
+  AssignStartingPlots.__InitStartBias = RoseInitStartBiasAll;
   AssignStartingPlots.__SetStartMinor = RoseSetStartMinor;
 end
