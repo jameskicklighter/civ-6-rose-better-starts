@@ -20,7 +20,14 @@
         <LoadOrder>1000</LoadOrder>
       </Properties>
       <File>Configuration/RBS_MapRedirects.sql</File>
+      <File>Configuration/RBS_MapOptions.sql</File>
     </UpdateDatabase>
+    <UpdateText id="RBS_MAP_TEXT">
+      <Properties>
+        <LoadOrder>1000</LoadOrder>
+      </Properties>
+      <File>Configuration/RBS_Text.xml</File>
+    </UpdateText>
   </FrontEndActions>
 
   <InGameActions>
@@ -30,6 +37,8 @@
       </Properties>
       <File>Maps/RBS_StartNormalizer.lua</File>
       <File>Maps/RBS_StartBias.lua</File>
+      <File>Maps/RBS_EqualRegions.lua</File>
+      <File>Maps/RBS_LargerPangaea.lua</File>
       <File>Maps/RBS_Continents.lua</File>
       <File>Maps/RBS_Fractal.lua</File>
       <File>Maps/RBS_InlandSea.lua</File>
@@ -52,8 +61,12 @@
 
   <Files>
     <File>Configuration/RBS_MapRedirects.sql</File>
+    <File>Configuration/RBS_MapOptions.sql</File>
+    <File>Configuration/RBS_Text.xml</File>
     <File>Maps/RBS_StartNormalizer.lua</File>
     <File>Maps/RBS_StartBias.lua</File>
+    <File>Maps/RBS_EqualRegions.lua</File>
+    <File>Maps/RBS_LargerPangaea.lua</File>
     <File>Maps/RBS_Continents.lua</File>
     <File>Maps/RBS_Fractal.lua</File>
     <File>Maps/RBS_InlandSea.lua</File>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GameData>
+  <LocalizedText>
+    <Replace Tag="LOC_RBS_LARGER_PANGAEA_NAME" Language="en_US">
+      <Text>Larger Pangaea</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_LARGER_PANGAEA_DESCRIPTION" Language="en_US">
+      <Text>Generates the Pangaea with less water (46/51/56 percent for low, standard and high sea level, instead of 53/58/63), so the continent is larger. The land is generated that way from the start; nothing is changed afterwards.</Text>
+    </Replace>
+  </LocalizedText>
+</GameData>

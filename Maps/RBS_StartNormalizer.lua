@@ -7,8 +7,10 @@ RoseBetterStarts = RoseBetterStarts or {};
 
 -- Start-bias enforcement for major civilizations (installed by Install below).
 include "RBS_StartBias";
+-- Equal-area regions on the maps that use them (installed per Create).
+include "RBS_EqualRegions";
 
-local VERSION = 6;
+local VERSION = 7;
 local MAX_DISTANCE = 5;
 local CHECKSUM_MODULUS = 2147483647;
 local MIX_MULTIPLIER = 48271;
@@ -530,6 +532,12 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
   checksum = AddChecksum(checksum, unsatisfiedCount);
   checksum = AddChecksum(checksum, RoseBetterStarts.BiasChecksum or 0);
   checksum = AddChecksum(checksum, RoseBetterStarts.MinorChecksum or 0);
+  checksum = AddChecksum(checksum, RoseBetterStarts.RegionsChecksum or 0);
+  local regionModeCodes = { engine = 0, equal = 1, fallback = 2, refused = 3 };
+  checksum = AddChecksum(checksum, regionModeCodes[RoseBetterStarts.RegionsMode or "engine"] or 4);
+  if RoseBetterStarts.LargerPangaea == true then
+    checksum = AddChecksum(checksum, 1);
+  end
 
   print(
     "RBS_FINGERPRINT version=" .. tostring(VERSION)
@@ -545,6 +553,9 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
     .. " bias_enabled=" .. tostring(RoseBetterStarts.StartBiasEnabled == true)
     .. " bias=" .. tostring(RoseBetterStarts.BiasChecksum or 0)
     .. " minor=" .. tostring(RoseBetterStarts.MinorChecksum or 0)
+    .. " regions_mode=" .. tostring(RoseBetterStarts.RegionsMode or "engine")
+    .. " regions=" .. tostring(RoseBetterStarts.RegionsChecksum or 0)
+    .. " larger=" .. tostring(RoseBetterStarts.LargerPangaea == true and 1 or 0)
     .. " checksum=" .. tostring(checksum)
   );
 end
@@ -655,7 +666,20 @@ function RoseBetterStarts.Install(baseMapFile)
         .. " applied=" .. tostring(applied and "yes" or "no")
         .. " majors=" .. tostring(before) .. "->" .. tostring(after));
     end
+    -- After the spectator filter, so the regions are counted for the real
+    -- civilizations only.
+    local restoreRegions = function() end;
+    if RoseBetterStarts.InstallEqualRegions ~= nil then
+      local okRegions, restoreOrError = pcall(RoseBetterStarts.InstallEqualRegions, RoseBetterStarts.BaseMapFile, args);
+      if okRegions then
+        restoreRegions = restoreOrError;
+      else
+        RoseBetterStarts.RegionsMode = "refused";
+        print("RBS_REGIONS mode=refused applied=no reason=install_error");
+      end
+    end
     local ok, startDatabase = pcall(baseCreate, args);
+    restoreRegions();
     restore();
     if not ok then
       error(startDatabase, 0);

@@ -18,7 +18,8 @@
 -- and the plot each city-state gets:
 --   __SetStartMinor   placed by zone (the majors' regions), not by the
 --                     engine's city-state regions
--- Everything else is the stock code: region division, the validity checks
+-- Everything else is the stock code: region division (replaced by
+-- equal-area regions on the maps RBS_EqualRegions.lua lists), the validity checks
 -- a start must pass, Balanced/Legendary resources, the order (city-states
 -- after every major, as the stock script already does), the city-state
 -- bias matching and ocean starts.
@@ -57,8 +58,10 @@
 --     holds a rare feature); resources RESOURCE_MINIMUM. So Canada and
 --     Russia start on the tundra edge and Vietnam inside its woods, not a
 --     few tiles away from them.
---   * Civilizations with enforced tiers are placed first, those with the
---     fewest satisfying regions before the others, then by strongest tier;
+--   * Civilizations with enforced tiers are placed first, human players
+--     before AIs among them (a human Mali takes the better desert region
+--     before an AI Nubia), then those with the fewest satisfying regions
+--     before the others, then by strongest tier;
 --     ties break by a key derived from the map seed and the player slot,
 --     never with a draw from the map generator's random stream, so lobby
 --     order alone does not decide. That greedy pass is then repaired by a
@@ -161,7 +164,7 @@
 
 RoseBetterStarts = RoseBetterStarts or {};
 
-local BIAS_VERSION = 4;
+local BIAS_VERSION = 5;
 local ENFORCE_START_BIASES = true;
 
 -- Tiers 1 and 2 are always required, all of them together; tier 3 only when
@@ -1180,6 +1183,10 @@ local function CompareCivs(left, right)
     return leftRequired;
   end
   if leftRequired then
+    -- A human with a bias to meet picks before an AI with one.
+    if left.Human ~= right.Human then
+      return left.Human;
+    end
     if left.Options ~= right.Options then
       return left.Options < right.Options;
     end
@@ -1277,6 +1284,12 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
     if PlayerConfigurations ~= nil and PlayerConfigurations[playerID] ~= nil then
       civType = PlayerConfigurations[playerID]:GetCivilizationTypeName() or "UNKNOWN";
     end
+    -- From the shared lobby configuration, the same on every machine.
+    local human = false;
+    if PlayerConfigurations ~= nil and PlayerConfigurations[playerID] ~= nil
+      and PlayerConfigurations[playerID].IsHuman ~= nil then
+      human = (PlayerConfigurations[playerID]:IsHuman() == true);
+    end
     local profile = profiles[civType] or EMPTY_PROFILE;
     local required = profile.RequiredTiers;
     local strongest = {};
@@ -1368,6 +1381,7 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
       OptionsStrongest = optionsStrong,
       OptionsStrict = optionsStrict,
       Strict = strictProfile,
+      Human = human,
       Key = GetKey(seed, playerID, listIndex)
     };
   end
@@ -1528,6 +1542,7 @@ local function PlanMajorRegions(self, firstRegionIndex, firstRegionPlots)
       .. " region=" .. tostring(chosenRegion or -1)
       .. " plan=" .. planLabel
       .. " level=" .. entryLevel
+      .. " human=" .. YesNo(civ.Human)
     );
 
     plan.Order[#plan.Order + 1] = civ.ListIndex;
