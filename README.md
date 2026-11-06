@@ -3,7 +3,7 @@
 Rose Better Starts is a standalone Civilization VI: Gathering Storm map-generation mod. It does two things while the map is being created:
 
 1. **Start biases are enforced.** When the game chooses where each major civilization starts, the mod makes the civilization's own start bias (the game's `StartBias` tables: Russia and Canada in tundra, Portugal and Phoenicia on the coast, Egypt on floodplains, Mali in desert, and so on) a requirement whenever the map can satisfy it, instead of the stock best-effort matching. The bias tables themselves are not changed.
-2. **Strategic resources are guaranteed.** Every major civilization with a land start gets access to all seven strategic resource types within five hexes whenever the generated terrain contains a legal empty plot for them.
+2. **Strategic resources are guaranteed.** Every major civilization with a land start gets access to all seven strategic resource types within five hexes whenever the generated terrain contains a legal empty plot for them, and otherwise within ten hexes, on a plot closer to it than to any other start.
 3. **Equal land on Pangaea.** On Pangaea every civilization's region holds about the same number of usable land plots (see "Equal-area regions"), and a "Larger Pangaea" map option generates the continent with less water.
 
 The balancing happens once, while the map is being created. The mod has no turn event, gameplay script, UI context, AI change, or post-generation map mutation.
@@ -48,7 +48,7 @@ The engine divides the land into one region per civilization by a measure of its
 
 ### Larger Pangaea
 
-A map option, off by default, on the Pangaea setup screen. Ticked, the Pangaea is generated with less water: 46, 51 or 56 percent for low, standard and high sea level, instead of the stock 53, 58 and 63 (BBM's Pangaea Ultima uses 43, 51 and 57). Everything else is the stock Pangaea generator, step for step with the same random draws; the land is generated that way from the start, nothing is changed afterwards. Unticked, the stock generator runs unchanged. The option is part of the lobby's map settings, so every player generates the same map; the fingerprint reports it as `larger`.
+A map option, off by default, on the Pangaea setup screen. Ticked, the Pangaea is generated with less water: 40, 46 or 52 percent for low, standard and high sea level, instead of the stock 53, 58 and 63 (BBM's Pangaea Ultima uses 43, 51 and 57, so this is a little more land than BBM at every sea level). Everything else is the stock Pangaea generator, step for step with the same random draws; the land is generated that way from the start, nothing is changed afterwards. Unticked, the stock generator runs unchanged. The option is part of the lobby's map settings, so every player generates the same map; the fingerprint reports it as `larger`.
 
 ### City-states
 
@@ -75,6 +75,8 @@ For every human and AI major civilization with a land starting plot, the mod che
 - Uranium
 
 An existing copy of the resource at a hex distance of five or less satisfies the check. If it is missing, Rose Better Starts places one unit of that resource on a legal empty land plot within the same radius.
+
+**Ten-tile fallback.** When no copy and no legal plot (land, or Coast for Oil) lies within five hexes, rings six to ten are searched, the nearest ring first. Only a plot closer to this start than to any other civilization's or city-state's start counts, so the fallback never serves a neighbour first and can never land within five tiles of another start. An existing copy there satisfies the check (`EXISTING_FAR`); otherwise one unit is placed on the nearest legal land plot (`PLACED_FAR`), and for Oil on a Coast tile when no land plot qualifies (`PLACED_OFFSHORE_FAR`).
 
 Horses and Iron prefer rings two and three. Later strategics prefer rings four and five so they consume fewer early district locations. If those rings contain no legal plot, the remaining rings through five are checked.
 
@@ -139,9 +141,9 @@ A map script that creates its start positions with the engine's `IGNORESTARTBIAS
 
 ## Best-effort limitations
 
-The radius is the Civ VI hex distance from the assigned starting plot and is fixed at five.
+The radius is the Civ VI hex distance from the assigned starting plot and is fixed at five, with the ten-tile fallback above.
 
-Resource placement must pass the game's own `ResourceBuilder.CanHaveResource` check. Some unusually constrained islands or polar starts may not contain an empty legal tile for every resource. Oil has the offshore fallback described above; Horses, Iron, Niter, Coal, Aluminum, and Uranium are land-only. In that case, the mod preserves the generated map and writes an `RBS_UNSATISFIED` entry to `Lua.log`. It never replaces another resource, expands the radius, or terraforms a tile to force success.
+Resource placement must pass the game's own `ResourceBuilder.CanHaveResource` check. Some unusually constrained islands or polar starts may not contain an empty legal tile for every resource. Oil has the offshore fallback described above; Horses, Iron, Niter, Coal, Aluminum, and Uranium are land-only. In that case, the mod preserves the generated map and writes an `RBS_UNSATISFIED` entry to `Lua.log`. It never replaces another resource, goes beyond ten tiles, or terraforms a tile to force success.
 
 Spectator slots added by spectator mods (leader `LEADER_SPECTATOR` or civilization `CIVILIZATION_SPECTATOR`) are left out of the land division: the stock script would reserve one region per alive major, spectators included, so a ninth of the map stayed empty around one of its best starts. While the stock script assigns starts, the mod hides spectator slots from its major list (the list is restored afterwards); every spectator then gets the passable land plot (with at least two passable land neighbours) farthest from all starts, logged as `RBS_SPECTATOR`, so its units stand where nobody settles, and the resource normalizer skips it with an `RBS_SKIP ... reason=SPECTATOR` entry. That start plot stays reserved. Every machine sees the same lobby configuration, so all filter the same slots.
 
@@ -209,8 +211,8 @@ Search for these records:
 - `RBS_MINOR_FALLBACK` — only when no civilization region was recorded (the zone placement could not run): a city-state whose engine region had no plot keeping the stock distances, with the stock fallback plot (`stock`) and the plot taken instead (`picked`), each with its distance to the nearest civilization (`stock_major`, `picked_major`) and to the nearest earlier city-state (`stock_minor`, `picked_minor`), whether the picked plot passes the two stock distance checks (`major_check`, `minor_check`) and the region's plot count.
 - `RBS_BEGIN` — confirms the wrapper and normalizer ran.
 - `RBS_AREA` — reports the number of plots scanned within five tiles of a start.
-- `RBS_RESOURCE` — records an existing or newly placed resource (`status=EXISTING`, `PLACED`, or `PLACED_OFFSHORE` for fallback Oil on water).
-- `RBS_UNSATISFIED` — records a land start/resource pair with no legal plot.
+- `RBS_RESOURCE` — records an existing or newly placed resource (`status=EXISTING`, `PLACED`, or `PLACED_OFFSHORE` for fallback Oil on water; `EXISTING_FAR`, `PLACED_FAR` and `PLACED_OFFSHORE_FAR` from the ten-tile fallback).
+- `RBS_UNSATISFIED` — records a land start/resource pair with no legal plot within ten tiles (`reason=NO_LEGAL_LAND_PLOT_WITHIN_10`, or `..._OR_OFFSHORE_..._WITHIN_10` for Oil); `closer_to_other` counts the plots in rings six to ten that held or could take the resource but were turned down because they lie at least as close to another start.
 - `RBS_SKIP` — records an intentionally skipped ocean start or spectator slot.
 - `RBS_SPECTATOR_FILTER` — printed when the lobby has spectator slots: whether hiding them from the stock script took effect (`applied=yes`, with the major count before and after). `applied=no` means the game refused the change and the stock script reserved a region for the spectator as without the mod; the fingerprint repeats it as `spectator_filter`.
 - `RBS_SPECTATOR` — the start given to a spectator slot after the real civilizations and city-states are placed: the land plot farthest from every start, with that distance.
@@ -219,7 +221,7 @@ Search for these records:
 - `RBS_LARGER_PANGAEA` — printed when the Larger Pangaea option is ticked: the water percent used.
 - `RBS_FINGERPRINT` — reports the map, seeds, counts, and deterministic checksum; `bias`, `minor` and `regions` are the checksums of the major placement, the city-state placement and the equal-area regions, `regions_mode` the region mode and `larger` the Larger Pangaea option, all included in `checksum`.
 
-For a multiplayer test, compare every `RBS_BIAS_PLACED` and `RBS_MINOR_PLACED` line, every `RBS_START_FINGERPRINT` line and the final `RBS_FINGERPRINT` line from each participant. They should be identical for the same lobby configuration and seeds. The `version` field identifies the placement rules. Version 3 scatters tied placements, version 4 adds the offshore Oil fallback, version 5 adds start-bias enforcement (`bias_version` 1; `bias_version` 2 adds the neighbourhood fertility, the crowding look-ahead and the two matchings; `bias_version` 3 adds the city-state fallback; `bias_version` 4 the polar rows for Canada and Russia and the city-state zones; `bias_version` 5 human players first among biased civilizations), version 6 leaves spectator slots out of the land division (`spectators` in the fingerprint counts them), and version 7 adds the equal-area regions and the Larger Pangaea option, so each places starts or resources differently from earlier versions on the same seed; every player must run the same version and `bias_version`. `RBS_AREA` lines report how many plots were scanned around each start; a start at least five tiles from any non-wrapping edge (top and bottom; also left and right on Inland Sea and Tilted Axis) should report 91.
+For a multiplayer test, compare every `RBS_BIAS_PLACED` and `RBS_MINOR_PLACED` line, every `RBS_START_FINGERPRINT` line and the final `RBS_FINGERPRINT` line from each participant. They should be identical for the same lobby configuration and seeds. The `version` field identifies the placement rules. Version 3 scatters tied placements, version 4 adds the offshore Oil fallback, version 5 adds start-bias enforcement (`bias_version` 1; `bias_version` 2 adds the neighbourhood fertility, the crowding look-ahead and the two matchings; `bias_version` 3 adds the city-state fallback; `bias_version` 4 the polar rows for Canada and Russia and the city-state zones; `bias_version` 5 human players first among biased civilizations), version 6 leaves spectator slots out of the land division (`spectators` in the fingerprint counts them), version 7 adds the equal-area regions and the Larger Pangaea option, and version 8 the ten-tile resource fallback and the Larger Pangaea water of 40/46/52, so each places starts or resources differently from earlier versions on the same seed; every player must run the same version and `bias_version`. `RBS_AREA` lines report how many plots were scanned around each start; a start at least five tiles from any non-wrapping edge (top and bottom; also left and right on Inland Sea and Tilted Axis) should report 91.
 
 Also check `Database.log` and `Modding.log` for component or SQL errors. The manifest should load one front-end configuration component, one front-end text component and one in-game `ImportFiles` component; it intentionally contains no `AddGameplayScripts` action.
 

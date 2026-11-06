@@ -10,8 +10,12 @@ include "RBS_StartBias";
 -- Equal-area regions on the maps that use them (installed per Create).
 include "RBS_EqualRegions";
 
-local VERSION = 7;
+local VERSION = 8;
 local MAX_DISTANCE = 5;
+-- When no copy or legal plot lies within MAX_DISTANCE, rings
+-- MAX_DISTANCE + 1 to FALLBACK_DISTANCE are searched, nearest ring first,
+-- for a plot closer to this start than to any other start.
+local FALLBACK_DISTANCE = 10;
 local CHECKSUM_MODULUS = 2147483647;
 local MIX_MULTIPLIER = 48271;
 
@@ -84,27 +88,30 @@ end
 RoseBetterStarts.GetMapSeed = GetMapSeed;
 RoseBetterStarts.GetTieBreakKey = GetTieBreakKey;
 
--- Plots within MAX_DISTANCE of a start, in ascending plot-index order. The
+-- Plots within MAX_DISTANCE of a start (or from minimum to maximum
+-- distance), in ascending plot-index order. The
 -- square offset window contains every plot within that hex distance. The
 -- lookup range is twice the radius so the engine's own range check can never
 -- trim the window (its metric is not documented); GetPlotDistance does the
 -- real filtering, and the seen set guards wrapped duplicates.
-local function CollectNearbyPlots(startPlot)
+local function CollectNearbyPlots(startPlot, minimum, maximum)
+  minimum = minimum or 0;
+  maximum = maximum or MAX_DISTANCE;
   local startIndex = startPlot:GetIndex();
   local startX = startPlot:GetX();
   local startY = startPlot:GetY();
   local nearby = {};
   local seen = {};
 
-  for dy = -MAX_DISTANCE, MAX_DISTANCE do
-    for dx = -MAX_DISTANCE, MAX_DISTANCE do
-      local plot = Map.GetPlotXY(startX, startY, dx, dy, MAX_DISTANCE * 2);
+  for dy = -maximum, maximum do
+    for dx = -maximum, maximum do
+      local plot = Map.GetPlotXY(startX, startY, dx, dy, maximum * 2);
       if plot ~= nil then
         local plotIndex = plot:GetIndex();
         if seen[plotIndex] ~= true then
           seen[plotIndex] = true;
           local distance = Map.GetPlotDistance(startIndex, plotIndex);
-          if distance <= MAX_DISTANCE then
+          if distance >= minimum and distance <= maximum then
             nearby[#nearby + 1] = { Plot = plot, PlotIndex = plotIndex, Distance = distance };
           end
         end
@@ -287,7 +294,7 @@ local function AssignSpectatorStarts(spectators)
   end
 end
 
-local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reservedStartPlots)
+local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reservedStartPlots, ownerStarts)
   for listIndex = 1, playerCount do
     local playerID = playerIDs[listIndex];
     local player = Players[playerID];
@@ -302,6 +309,9 @@ local function CollectStartingPlots(playerIDs, playerCount, startsByIndex, reser
       if startPlot ~= nil then
         local startIndex = startPlot:GetIndex();
         reservedStartPlots[startIndex] = true;
+        if not spectator then
+          ownerStarts[#ownerStarts + 1] = startIndex;
+        end
         if startsByIndex ~= nil and not spectator then
           startsByIndex[#startsByIndex + 1] = {
             PlayerID = playerID,
@@ -320,12 +330,13 @@ end
 local function CollectMajorStarts()
   local starts = {};
   local reservedStartPlots = {};
+  local ownerStarts = {};
 
   local majorIDs = PlayerManager.GetAliveMajorIDs();
-  CollectStartingPlots(majorIDs, PlayerManager.GetAliveMajorsCount(), starts, reservedStartPlots);
+  CollectStartingPlots(majorIDs, PlayerManager.GetAliveMajorsCount(), starts, reservedStartPlots, ownerStarts);
 
   local minorIDs = PlayerManager.GetAliveMinorIDs();
-  CollectStartingPlots(minorIDs, PlayerManager.GetAliveMinorsCount(), nil, reservedStartPlots);
+  CollectStartingPlots(minorIDs, PlayerManager.GetAliveMinorsCount(), nil, reservedStartPlots, ownerStarts);
 
   table.sort(starts, function(left, right)
     if left.PlotIndex == right.PlotIndex then
@@ -334,7 +345,7 @@ local function CollectMajorStarts()
     return left.PlotIndex < right.PlotIndex;
   end);
 
-  return starts, reservedStartPlots;
+  return starts, reservedStartPlots, ownerStarts;
 end
 
 -- Nearest existing copy; ties keep the lowest plot index (nearby is sorted).
@@ -404,9 +415,115 @@ local function FindPlacementPlot(startRecord, resourceDefinition, resourceIndex,
   return bestPlot, bestDistance;
 end
 
+-- Rings MAX_DISTANCE + 1 to FALLBACK_DISTANCE of a start, collected on first
+-- use.
+local function FarPlots(startRecord)
+  if startRecord.Far == nil then
+    startRecord.Far = CollectNearbyPlots(startRecord.Plot, MAX_DISTANCE + 1, FALLBACK_DISTANCE);
+  end
+  return startRecord.Far;
+end
+
+-- A plot at this distance from the start that is farther from every other
+-- start (civilizations and city-states, spectators excluded), so the
+-- fallback never serves a neighbour first.
+local function IsCloserThanOthers(plotIndex, distance, startIndex, ownerStarts)
+  for n = 1, #ownerStarts do
+    local other = ownerStarts[n];
+    if other ~= startIndex and Map.GetPlotDistance(plotIndex, other) <= distance then
+      return false;
+    end
+  end
+  return true;
+end
+
+-- Nearest existing copy in the fallback rings that is closer to this start
+-- than to any other; ties keep the lowest plot index.
+local function FindFarResource(startRecord, resourceIndex, ownerStarts)
+  local far = FarPlots(startRecord);
+  local nearestPlot = nil;
+  local nearestDistance = FALLBACK_DISTANCE + 1;
+
+  for n = 1, #far do
+    local entry = far[n];
+    local plot = entry.Plot;
+    if entry.Distance < nearestDistance
+      and plot:GetResourceCount() > 0
+      and plot:GetResourceType() == resourceIndex
+      and IsCloserThanOthers(entry.PlotIndex, entry.Distance, startRecord.PlotIndex, ownerStarts) then
+      nearestPlot = plot;
+      nearestDistance = entry.Distance;
+    end
+  end
+
+  return nearestPlot, nearestDistance;
+end
+
+-- Fallback placement: the same legality as FindPlacementPlot, in the
+-- fallback rings, nearest ring first, then the seed-derived key, then plot
+-- index; only plots closer to this start than to any other.
+local function FindFallbackPlot(startRecord, resourceIndex, resourceHash, reservedStartPlots, seed, offshore, ownerStarts)
+  local far = FarPlots(startRecord);
+  local bestPlot = nil;
+  local bestDistance = FALLBACK_DISTANCE + 1;
+  local bestKey = CHECKSUM_MODULUS;
+  local bestPlotIndex = -1;
+
+  for n = 1, #far do
+    local entry = far[n];
+    local distance = entry.Distance;
+    local plotIndex = entry.PlotIndex;
+    if distance <= bestDistance and reservedStartPlots[plotIndex] ~= true then
+      local key = GetTieBreakKey(seed, startRecord.PlotIndex, resourceIndex, plotIndex);
+      local better = distance < bestDistance
+        or key < bestKey
+        or (key == bestKey and plotIndex < bestPlotIndex);
+      local plot = entry.Plot;
+      if better
+        and plot:IsWater() == offshore
+        and not plot:IsImpassable()
+        and not plot:IsNaturalWonder()
+        and plot:GetResourceCount() == 0
+        and ResourceBuilder.CanHaveResource(plot, resourceHash)
+        and IsCloserThanOthers(plotIndex, distance, startRecord.PlotIndex, ownerStarts) then
+        bestPlot = plot;
+        bestDistance = distance;
+        bestKey = key;
+        bestPlotIndex = plotIndex;
+      end
+    end
+  end
+
+  return bestPlot, bestDistance;
+end
+
+-- For the log only: plots in the fallback rings that hold this resource or
+-- could take it (land, and Coast for Oil) but lie at least as close to
+-- another start, so the ownership rule turned them down.
+local function CountCloserToOther(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, ownerStarts)
+  local far = FarPlots(startRecord);
+  local count = 0;
+  for n = 1, #far do
+    local entry = far[n];
+    local plot = entry.Plot;
+    local holds = plot:GetResourceCount() > 0 and plot:GetResourceType() == resourceIndex;
+    local legal = reservedStartPlots[entry.PlotIndex] ~= true
+      and (not plot:IsWater() or resourceDefinition.OffshoreFallback == true)
+      and not plot:IsImpassable()
+      and not plot:IsNaturalWonder()
+      and plot:GetResourceCount() == 0
+      and ResourceBuilder.CanHaveResource(plot, resourceHash);
+    if (holds or legal)
+      and not IsCloserThanOthers(entry.PlotIndex, entry.Distance, startRecord.PlotIndex, ownerStarts) then
+      count = count + 1;
+    end
+  end
+  return count;
+end
+
 -- Plot:GetResourceType returns a database index, while ResourceBuilder's
 -- placement functions use the resource type hash.
-local function EnsureResource(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, seed)
+local function EnsureResource(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, seed, ownerStarts)
   local existingPlot, existingDistance = FindExistingResource(startRecord.Nearby, resourceIndex);
   if existingPlot ~= nil then
     print(
@@ -447,11 +564,37 @@ local function EnsureResource(startRecord, resourceDefinition, resourceIndex, re
   end
 
   if placementPlot == nil then
+    local farPlot, farDistance = FindFarResource(startRecord, resourceIndex, ownerStarts);
+    if farPlot ~= nil then
+      print(
+        "RBS_RESOURCE player=" .. tostring(startRecord.PlayerID)
+        .. " start=" .. tostring(startRecord.PlotIndex)
+        .. " resource=" .. resourceDefinition.Type
+        .. " status=EXISTING_FAR"
+        .. " plot=" .. tostring(farPlot:GetIndex())
+        .. " distance=" .. tostring(farDistance)
+      );
+      return true;
+    end
+    placementPlot, placementDistance = FindFallbackPlot(
+      startRecord, resourceIndex, resourceHash, reservedStartPlots, seed, false, ownerStarts);
+    placedStatus = "PLACED_FAR";
+    unsatisfiedReason = "NO_LEGAL_LAND_PLOT_WITHIN_" .. tostring(FALLBACK_DISTANCE);
+    if placementPlot == nil and resourceDefinition.OffshoreFallback then
+      placementPlot, placementDistance = FindFallbackPlot(
+        startRecord, resourceIndex, resourceHash, reservedStartPlots, seed, true, ownerStarts);
+      placedStatus = "PLACED_OFFSHORE_FAR";
+      unsatisfiedReason = "NO_LEGAL_LAND_OR_OFFSHORE_PLOT_WITHIN_" .. tostring(FALLBACK_DISTANCE);
+    end
+  end
+
+  if placementPlot == nil then
     print(
       "RBS_UNSATISFIED player=" .. tostring(startRecord.PlayerID)
       .. " start=" .. tostring(startRecord.PlotIndex)
       .. " resource=" .. resourceDefinition.Type
       .. " reason=" .. unsatisfiedReason
+      .. " closer_to_other=" .. tostring(CountCloserToOther(startRecord, resourceDefinition, resourceIndex, resourceHash, reservedStartPlots, ownerStarts))
     );
     return false;
   end
@@ -481,7 +624,7 @@ local function EnsureResource(startRecord, resourceDefinition, resourceIndex, re
   return true;
 end
 
-local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
+local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount, ownerStarts)
   local checksum = 17;
 
   for startNumber = 1, #starts do
@@ -502,6 +645,9 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
 
         if resourceRow ~= nil then
           resourcePlot, resourceDistance = FindExistingResource(startRecord.Nearby, resourceRow.Index);
+          if resourcePlot == nil then
+            resourcePlot, resourceDistance = FindFarResource(startRecord, resourceRow.Index, ownerStarts);
+          end
         end
 
         local resourcePlotIndex = -1;
@@ -561,7 +707,7 @@ local function PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount)
 end
 
 function RoseBetterStarts.NormalizeMajorStrategics()
-  local starts, reservedStartPlots = CollectMajorStarts();
+  local starts, reservedStartPlots, ownerStarts = CollectMajorStarts();
   local seed = GetMapSeed();
   local skippedOceanStarts = 0;
   local unsatisfiedCount = 0;
@@ -570,6 +716,7 @@ function RoseBetterStarts.NormalizeMajorStrategics()
     "RBS_BEGIN version=" .. tostring(VERSION)
     .. " map=" .. tostring(RoseBetterStarts.BaseMapFile or GetConfigurationValue(MapConfiguration, "MAP_SCRIPT"))
     .. " radius=" .. tostring(MAX_DISTANCE)
+    .. " fallback_radius=" .. tostring(FALLBACK_DISTANCE)
     .. " majors=" .. tostring(#starts)
   );
 
@@ -609,7 +756,8 @@ function RoseBetterStarts.NormalizeMajorStrategics()
           resourceRow.Index,
           resourceRow.Hash,
           reservedStartPlots,
-          seed
+          seed,
+          ownerStarts
         ) then
           unsatisfiedCount = unsatisfiedCount + 1;
         end
@@ -617,7 +765,7 @@ function RoseBetterStarts.NormalizeMajorStrategics()
     end
   end
 
-  PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount);
+  PrintFingerprint(starts, skippedOceanStarts, unsatisfiedCount, ownerStarts);
 end
 
 function RoseBetterStarts.Install(baseMapFile)
