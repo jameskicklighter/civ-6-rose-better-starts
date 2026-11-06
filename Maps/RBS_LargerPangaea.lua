@@ -17,7 +17,7 @@
 RoseBetterStarts = RoseBetterStarts or {};
 
 local LARGER_OPTION = "RBSLargerPangaea";
-local LARGER_WATER_PERCENT = { Low = 46, Normal = 51, High = 56 };
+local LARGER_WATER_PERCENT = { Low = 40, Normal = 46, High = 52 };
 
 local BaseGeneratePlotTypes = GeneratePlotTypes;
 local BaseInitFractal = InitFractal;
