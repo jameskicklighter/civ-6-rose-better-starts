@@ -7,5 +7,38 @@
     <Replace Tag="LOC_RBS_LARGER_PANGAEA_DESCRIPTION" Language="en_US">
       <Text>Generates the Pangaea with less water (40/46/52 percent for low, standard and high sea level, instead of 53/58/63), so the continent is larger. The land is generated that way from the start; nothing is changed afterwards.</Text>
     </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_NAME" Language="en_US">
+      <Text>Rose Snowflake</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_DESCRIPTION" Language="en_US">
+      <Text>Six arms around a central hub, for six players. Every arm, the islands beside it and its share of the hub are the same land: the map is generated once for one sixth and rotated. Each arm runs from a short desert with floodplains, through woods, rainforest and a few mountains, to the start near the tip between a tundra corner and a desert corner, with rivers and three of every strategic resource. Each gap between two arms holds an island with two city-states (twelve in all). The hub is one round landmass around a lake, with rivers and its natural wonders. Only the luxuries differ: the arms alternate three luxury sets, the islands three more, and the hub has two of its own. Spectator slots take no arm and start on a small islet in a corner.</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_SIZE_DESCRIPTION" Language="en_US">
+      <Text>Six arms (six players) and twelve city-state sites. The extra player slots are for spectators; a seventh civilization would start on a corner islet.</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_NAME" Language="en_US">
+      <Text>Hub Natural Wonders</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_DESCRIPTION" Language="en_US">
+      <Text>Random natural wonders (no volcanoes) at evenly spaced sites in the hub, between the arms, the same distances from every arm. If the sites cannot take them, up to three wonders of any kind (multi-tile and coastal ones included) are placed in the hub wherever they fit, unevenly.</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_0_NAME" Language="en_US">
+      <Text>None</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_0_DESCRIPTION" Language="en_US">
+      <Text>No natural wonders.</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_3_NAME" Language="en_US">
+      <Text>Three</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_3_DESCRIPTION" Language="en_US">
+      <Text>Three wonders, on alternate sites; multi-tile wonders can be drawn, starting on the site.</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_6_NAME" Language="en_US">
+      <Text>Six</Text>
+    </Replace>
+    <Replace Tag="LOC_RBS_SNOWFLAKE_WONDERS_6_DESCRIPTION" Language="en_US">
+      <Text>Six single-tile wonders, one at each site, between every pair of arms.</Text>
+    </Replace>
   </LocalizedText>
 </GameData>

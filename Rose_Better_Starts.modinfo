@@ -2,8 +2,8 @@
 <Mod id="4f11627b-e207-443f-bcbc-fb419d29409a" version="1">
   <Properties>
     <Name>Rose Better Starts</Name>
-    <Description>Enforces each civilization's own start bias when choosing major-civilization starts, spreads city-states evenly across the civilizations' land, then places every missing strategic resource within five tiles of each start. Deterministic, map generation only.</Description>
-    <Teaser>Multiplayer-safe start-bias and strategic-resource balancing for Firaxis procedural maps.</Teaser>
+    <Description>Enforces each civilization's own start bias when choosing major-civilization starts, spreads city-states evenly across the civilizations' land, then places every missing strategic resource within five tiles of each start. Also adds Rose Snowflake, a six-armed map built with six-fold symmetry for six players and spectators: identical arms, two city-states on each island between them, natural wonders in a shared hub. Deterministic, map generation only.</Description>
+    <Teaser>Multiplayer-safe start-bias and strategic-resource balancing for Firaxis procedural maps, plus the Rose Snowflake six-player symmetric map.</Teaser>
     <Authors>Rose</Authors>
     <AffectsSavedGames>0</AffectsSavedGames>
     <SupportsMultiplayer>1</SupportsMultiplayer>
@@ -21,6 +21,7 @@
       </Properties>
       <File>Configuration/RBS_MapRedirects.sql</File>
       <File>Configuration/RBS_MapOptions.sql</File>
+      <File>Configuration/RBS_Snowflake.sql</File>
     </UpdateDatabase>
     <UpdateText id="RBS_MAP_TEXT">
       <Properties>
@@ -31,6 +32,12 @@
   </FrontEndActions>
 
   <InGameActions>
+    <UpdateText id="RBS_MAP_TEXT_INGAME">
+      <Properties>
+        <LoadOrder>1000</LoadOrder>
+      </Properties>
+      <File>Configuration/RBS_Text.xml</File>
+    </UpdateText>
     <ImportFiles id="RBS_MAP_SCRIPTS">
       <Properties>
         <LoadOrder>1000</LoadOrder>
@@ -56,12 +63,14 @@
       <File>Maps/RBS_Tilted_Axis.lua</File>
       <File>Maps/RBS_Highlands_XP2.lua</File>
       <File>Maps/RBS_Wetlands_XP2.lua</File>
+      <File>Maps/RBS_Snowflake.lua</File>
     </ImportFiles>
   </InGameActions>
 
   <Files>
     <File>Configuration/RBS_MapRedirects.sql</File>
     <File>Configuration/RBS_MapOptions.sql</File>
+    <File>Configuration/RBS_Snowflake.sql</File>
     <File>Configuration/RBS_Text.xml</File>
     <File>Maps/RBS_StartNormalizer.lua</File>
     <File>Maps/RBS_StartBias.lua</File>
@@ -84,6 +93,7 @@
     <File>Maps/RBS_Tilted_Axis.lua</File>
     <File>Maps/RBS_Highlands_XP2.lua</File>
     <File>Maps/RBS_Wetlands_XP2.lua</File>
+    <File>Maps/RBS_Snowflake.lua</File>
     <File>README.md</File>
   </Files>
 </Mod>

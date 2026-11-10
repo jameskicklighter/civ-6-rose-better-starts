@@ -5,8 +5,30 @@ Rose Better Starts is a standalone Civilization VI: Gathering Storm map-generati
 1. **Start biases are enforced.** When the game chooses where each major civilization starts, the mod makes the civilization's own start bias (the game's `StartBias` tables: Russia and Canada in tundra, Portugal and Phoenicia on the coast, Egypt on floodplains, Mali in desert, and so on) a requirement whenever the map can satisfy it, instead of the stock best-effort matching. The bias tables themselves are not changed.
 2. **Strategic resources are guaranteed.** Every major civilization with a land start gets access to all seven strategic resource types within five hexes whenever the generated terrain contains a legal empty plot for them, and otherwise within ten hexes, on a plot closer to it than to any other start.
 3. **Equal land on Pangaea.** On Pangaea every civilization's region holds about the same number of usable land plots (see "Equal-area regions"), and a "Larger Pangaea" map option generates the continent with less water.
+4. **Rose Snowflake.** One map of its own: six identical arms around a hub, for six players and spectators (see "Rose Snowflake").
 
 The balancing happens once, while the map is being created. The mod has no turn event, gameplay script, UI context, AI change, or post-generation map mutation.
+
+## Rose Snowflake
+
+A map script of the mod's own (`Maps/RBS_Snowflake.lua`, listed as **Rose Snowflake**), inspired by the six-player balanced maps: six arms around a central hub, generated with six-fold rotational symmetry. The script builds one sixth of the map (a 60-degree wedge) and copies every plot of it to the five other rotations, so each player's arm, the islands beside it and its share of the hub are the same terrain, features, rivers, bonus and strategic resources, goody huts and coastal lowlands. The details are random each game (coastline, hills, woods, rivers, island shapes, where each resource sits, which luxuries form each set); the symmetry is not.
+
+- **Arms**, laid out like the Firaxis six-player map, from the hub outwards:
+  - a short desert right where the arm meets the hub, with a river (the "desert river") running its length, its banks desert floodplains;
+  - the middle of the arm: woods on one side, rainforest on the other, and a small group of about three mountains between them for district adjacency;
+  - the start near the back on the arm's centre line, not on the coast (the sea is three tiles away at the tip, so the capital can build a Harbor), with a river beside it; one back corner is tundra with woods, the other a small desert with floodplains and two mountains at its far end; both corners are two tiles thick.
+  - Up to five rivers per arm (start, gate desert, woods side, rainforest side, desert corner) and a few grassland or plains floodplains besides the desert ones.
+  - **Three of every strategic resource**, each in a region that suits it (Horses in open land, Iron in the hills and the desert corner, Niter and Oil in the gate desert and the tundra, Oil also in a rainforest marsh, Coal in the woods and hills, Aluminium in the desert corner, the rainforest and the plains, Uranium in the tundra woods, the woods and the desert corner), plus four offshore Oil fields per arm, and every sixth of the hub adds three more strategic types drawn each game.
+  - Bonus resources in every region (wheat on a desert floodplain, deer, bananas, copper, sheep, stone, cattle, rice), food and production next to the start, and plenty of sea food: seven fish and two crabs per arm.
+  - Starts are 24 tiles apart; an arm has about 125 land tiles.
+- **City-state islands.** Each gap between two arms holds an island about three tiles thick (about 40 tiles, wooded and partly rainforest) with two coastal city-state sites, twelve in all, a mountain, fish, crabs, land bonuses and two Coal. Like the luxuries, the islands alternate a strategic set, A, B, C, A, B, C: two Oil (on land), two Uranium or two Aluminium, each on a flat desert tile (the one terrain all three accept, so the islands' land stays the same). In the offline runs the city-states were 13 tiles from the nearest capital and at least 10 from each other. With fewer city-states, each island gets one before any gets a second, spread evenly; with 7 to 11 the second sites go to some islands only, so those counts cannot be perfectly even.
+- **Hub.** One round landmass (about 200 tiles) around a seven-tile lake, with a river in every sixth (from one side of the sixth, past the lake, to a bay beside the arm), two hub luxuries, three strategic types, two bonuses and a fish per sixth, and six natural wonder sites inside it, toward the gaps between the arms. The **Hub Natural Wonders** option places none, three (alternate sites) or six. Every arm has the same distances to the wonders in each case: the start sits on its arm's centre line, and the sites are 8 tiles apart, the game's minimum between natural wonders. The wonders are drawn at random, each site its own, leaving out the volcanic ones (Kilimanjaro, Vesuvius), which would erupt beside one arm only, and any excluded in the advanced setup; a single-tile wonder's tile takes the terrain it needs. With Three, multi-tile wonders can be drawn too: they start on the site, so every arm has the same distance to them, and spread from there unevenly, as they do by design (never onto an arm or a planned resource tile). With Six only single-tile wonders are used, since neighbouring sites are exactly the minimum distance apart. If any site cannot take a wonder, none is placed, so the map stays equal; with Six, the map then tries three on alternate sites (12 tiles apart, in case the game wants more than 8 between neighbours). If the even placement fails altogether, up to three wonders of any kind (multi-tile and coastal ones such as the Galapagos included) are placed in the hub where they fit, uneven but in the middle (`_WONDERS uneven` in the log). Rivers stay at least two tiles from the wonder sites: the game refuses these wonders next to a river.
+- **Luxuries** are the one thing that differs. The arms alternate three sets, A, B, C, A, B, C, of three luxury types with two copies each (open land: one near the start, one mid-arm; woods: both in the woods; rainforest: both in the rainforest); the six islands alternate sets D, E, F of two types (one on land near the inner city-state, one in the water near the outer); the hub holds G and H, one copy of each per sixth. Each set's types are drawn at random among the luxuries whose rules fit its tiles, all 17 types different when the game has enough (`shared=0` on the log line).
+- **Players.** Majors take an even spread of arms (all six with six players; 0, 2, 4 with three; opposite arms with two), turned by a random offset, with the players shuffled. Spectator slots (leader `LEADER_SPECTATOR` or civilization `CIVILIZATION_SPECTATOR`, as the Better Spectator Mod uses) never take an arm: each starts on a small snow islet in a corner of the grid, outside the symmetric area (the Better Spectator Mod removes the spectator's units at the start). The lobby allows up to 12 players so spectators fit; a seventh civilization would start on an islet as well (`RBS_SNOWFLAKE_OVERFLOW`).
+- **Size.** 64x64 plots on the Small map size (costs and city targets of Small), about 1,250 land tiles.
+- **Log.** `RBS_SNOWFLAKE_*` lines in `Lua.log`: `_LAND` (land per zone in one sixth), `_ISLAND`, `_RIVERS`, `_WONDERS`, `_LUXURIES` (each set's types), `_MAJORS` (player, arm, luxury set), `_MINORS`, `_ISLET`, and `_FINGERPRINT` with a checksum over every plot and the starts for comparing multiplayer peers. `missed_slots`, `resource_fails` and `luxury_fails` should read 0.
+
+The other parts of the mod (start biases, strategic top-up, equal regions) do not run on this map: its starts and resources are already fixed by the script.
 
 ## Start biases
 
@@ -104,7 +126,7 @@ The mod does **not** change:
 
 ## Supported maps
 
-Enabling the mod transparently affects the existing Firaxis map selections; it does not add duplicate `Rose` map entries. Their names, images, and normal setup options remain unchanged.
+Enabling the mod transparently affects the existing Firaxis map selections; it does not add duplicate `Rose` map entries. Their names, images, and normal setup options remain unchanged. The one new entry is the mod's own map, Rose Snowflake (see above).
 
 Gathering Storm maps:
 
@@ -159,6 +181,7 @@ Rose Better Starts is designed to avoid the runtime synchronization risks found 
 - Ties use the seed-derived key described above, then plot index. The key uses exact integer arithmetic within double precision, so every platform computes identical values. Preference scores are integers.
 - The code does not use `math.random`, unordered table traversal for placement, system time, gameplay turn events, or unit/player mutations, and it takes no draw from the map generator's random stream.
 - A canonical fingerprint is logged after generation for host/client comparison; it covers the start-bias placement and the resources.
+- Rose Snowflake is a full map script, so like every Firaxis script it draws from the map generator's synchronised random stream (`TerrainBuilder.GetRandomNumber`), always in a fixed order (plots in index order, sorted candidate lists, integer geometry), and logs its own fingerprint (`RBS_SNOWFLAKE_FINGERPRINT`).
 
 Every multiplayer participant must enable the same Rose Better Starts version and use the same DLC and gameplay-mod set. Civ VI can still desynchronize when players have mismatched files, DLC, mod versions, or load orders; this mod cannot correct those external mismatches.
 
@@ -232,12 +255,14 @@ Rose_Better_Starts.modinfo       Mod metadata and components
 Configuration/
   RBS_MapRedirects.sql           Transparent Firaxis-map redirects
   RBS_MapOptions.sql             Map options (Larger Pangaea)
-  RBS_Text.xml                   Option text
+  RBS_Snowflake.sql              Rose Snowflake map entry, size and option
+  RBS_Text.xml                   Option and map text
 Maps/
   RBS_StartNormalizer.lua        Strategic resource normalizer and mod installer
   RBS_StartBias.lua              Start-bias enforcement for major civilizations
   RBS_EqualRegions.lua           Equal-area regions (Pangaea)
   RBS_LargerPangaea.lua          Larger Pangaea land generation
+  RBS_Snowflake.lua              Rose Snowflake map script
   RBS_*.lua                      Thin wrappers around Firaxis map scripts
 README.md                        Installation, behavior, and verification
 ```
